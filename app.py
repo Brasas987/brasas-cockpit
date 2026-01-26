@@ -183,7 +183,7 @@ except Exception as e:
 # ==============================================================================
 # 4. LÓGICA DE INTERFAZ Y NAVEGACIÓN
 # ==============================================================================
-hoy = datetime.now()
+hoy = datetime.now() - timedelta(hours=5)
 
 with st.sidebar:
     st.title("🔥 BRASAS CAPITALES")
@@ -253,7 +253,7 @@ if menu == "1. CORPORATE OVERVIEW":
         st.metric("VENTAS TOTALES", f"S/ {kpi_venta:,.0f}", periodo_label)
     
     with col2:
-        st.metric("MARGEN BRUTO (TEÓRICO)", f"{kpi_margen_avg:.1f}%", "Meta: >65%")
+        st.metric("MARGEN BRUTO (TEÓRICO)", f"{kpi_margen_avg:.1f}%", "Meta: >60%")
         
     with col3:
         # Gestión por Excepción: Alerta si Merma > 300
