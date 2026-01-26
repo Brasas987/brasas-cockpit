@@ -396,18 +396,27 @@ elif menu == "2. EFICIENCIA & COSTOS":
 elif menu == "3. FINANZAS & RUNWAY":
     st.header("🔮 Soberanía Financiera & Estructura")
 
+    # --- 1. INICIALIZACIÓN DE VARIABLES (Valores por defecto 0.00) ---
+    orden = "ESPERANDO DATOS... (Ejecuta Colab)"
+    runway_val = 0.0
+    burn_rate = 0.0
+    deuda_tc = 0.0
+    pe_diario = 0.0
+    pe_mensual = 0.0
+    margen_contrib = 0.0
+    
     df_sob = DATA['soberania']
     
+    # --- 2. SI HAY DATOS, SOBRESCRIBIMOS LOS CEROS ---
     if not df_sob.empty:
         ultimo = df_sob.iloc[-1]
         
-        # Extracción de Datos
         orden = ultimo.get('ORDEN_TESORERIA', 'SIN DATOS')
         runway_val = ultimo.get('Runway_Dias', 0)
         burn_rate = ultimo.get('Burn_Rate_Diario', 0)
         deuda_tc = ultimo.get('Deuda_TC_Auditada', 0)
         
-        # Cálculo de Equilibrio Estructural
+        # Cálculo de Equilibrio
         try:
             ratio = float(str(ultimo.get('Ratio_Costo_Real', '0.6')).replace('%',''))
             if ratio > 1: ratio /= 100
@@ -416,45 +425,59 @@ elif menu == "3. FINANZAS & RUNWAY":
         
         pe_diario = burn_rate / margen_contrib if margen_contrib > 0 else 0
         pe_mensual = pe_diario * 30
-        
-        # --- BLOQUE 1: GESTIÓN DE TESORERÍA (ORDEN) ---
-        st.markdown(f"### 📢 ORDEN DEL DÍA")
-        if "ALERTA" in str(orden):
-            st.markdown(f'<div class="critical-box">🚨 {orden}</div>', unsafe_allow_html=True)
-        elif "CRECIMIENTO" in str(ultimo.get('STATUS','')):
-            st.markdown(f'<div class="success-box">🚀 {orden}</div>', unsafe_allow_html=True)
-        else:
-            st.info(f"🛡️ {orden}")
-            
-        st.markdown("---")
-
-        # --- BLOQUE 2: PUNTO DE EQUILIBRIO ESTRUCTURAL ---
-        st.subheader("⚖️ Estructura de Costos (Break-even Analysis)")
-        c_pe1, c_pe2, c_pe3 = st.columns(3)
-        
-        with c_pe1:
-            st.metric("COSTO FIJO DIARIO", f"S/ {burn_rate:,.2f}", "Burn Rate Operativo")
-        with c_pe2:
-            st.metric("PE DIARIO (META)", f"S/ {pe_diario:,.2f}", f"Margen Real: {margen_contrib*100:.1f}%")
-        with c_pe3:
-            st.metric("PE MENSUAL (META)", f"S/ {pe_mensual:,.0f}", "Para no perder dinero")
-            
-        st.markdown("---")
-
-        # --- BLOQUE 3: RUNWAY & DEUDA ---
-        st.subheader("✈️ Evolución de Supervivencia")
-        fig_run = px.line(df_sob, x='Fecha_dt', y='Runway_Dias', markers=True)
-        fig_run.add_hline(y=45, line_dash="dot", line_color="green", annotation_text="Objetivo (45)")
-        fig_run.add_hline(y=30, line_dash="dot", line_color="red", annotation_text="Peligro (30)")
-        fig_run.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
-        st.plotly_chart(fig_run, use_container_width=True)
-
-        st.metric("DEUDA PASIVA (TC)", f"S/ {deuda_tc:,.2f}", "Deuda Corriente a Pagar")
-
     else:
-        st.warning("⚠️ El módulo de Forecast no ha generado datos. Ejecuta Colab.")
+        # Aviso pequeño, no intrusivo
+        st.caption("⚠️ Modo Visualización: Ejecuta el script de Colab para poblar estos datos.")
 
-    # DEUDAS PROVEEDORES Y CAPEX
+    # --- 3. VISUALIZACIÓN (SE MUESTRA SIEMPRE) ---
+    
+    # A. BLOQUE DE ORDEN
+    st.markdown(f"### 📢 ORDEN DEL DÍA")
+    if "ALERTA" in str(orden):
+        st.markdown(f'<div class="critical-box">🚨 {orden}</div>', unsafe_allow_html=True)
+    elif "CRECIMIENTO" in str(orden):
+        st.markdown(f'<div class="success-box">🚀 {orden}</div>', unsafe_allow_html=True)
+    elif "ESPERANDO" in str(orden):
+         st.info(f"⏳ {orden}")
+    else:
+        st.info(f"🛡️ {orden}")
+        
+    st.markdown("---")
+
+    # B. BLOQUE DE ESTRUCTURA DE COSTOS
+    st.subheader("⚖️ Estructura de Costos (Break-even Analysis)")
+    c_pe1, c_pe2, c_pe3 = st.columns(3)
+    
+    with c_pe1:
+        st.metric("COSTO FIJO DIARIO", f"S/ {burn_rate:,.2f}", "Burn Rate Operativo")
+    with c_pe2:
+        val_margen = margen_contrib * 100 if margen_contrib > 0 else 0
+        st.metric("PE DIARIO (META)", f"S/ {pe_diario:,.2f}", f"Margen Real: {val_margen:.1f}%")
+    with c_pe3:
+        st.metric("PE MENSUAL (META)", f"S/ {pe_mensual:,.0f}", "Para no perder dinero")
+        
+    st.markdown("---")
+
+    # C. BLOQUE DE RUNWAY & DEUDA
+    st.subheader("✈️ Evolución de Supervivencia")
+    
+    # Lógica del Gráfico (Si está vacío, crea uno ficticio plano)
+    if not df_sob.empty:
+        fig_run = px.line(df_sob, x='Fecha_dt', y='Runway_Dias', markers=True)
+    else:
+        # Gráfico vacío placeholder
+        dummy_data = pd.DataFrame({'Fecha_dt': [hoy], 'Runway_Dias': [0]})
+        fig_run = px.line(dummy_data, x='Fecha_dt', y='Runway_Dias')
+        fig_run.update_layout(yaxis_range=[0, 60]) # Rango fijo para que se vea bien
+
+    fig_run.add_hline(y=45, line_dash="dot", line_color="green", annotation_text="Objetivo (45)")
+    fig_run.add_hline(y=30, line_dash="dot", line_color="red", annotation_text="Peligro (30)")
+    fig_run.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+    st.plotly_chart(fig_run, use_container_width=True)
+
+    st.metric("DEUDA PASIVA (TC)", f"S/ {deuda_tc:,.2f}", "Deuda Corriente a Pagar")
+
+    # D. DEUDAS & CAPEX (Se mantiene igual)
     st.markdown("---")
     c_prov, c_cap = st.columns(2)
     with c_prov:
@@ -462,7 +485,7 @@ elif menu == "3. FINANZAS & RUNWAY":
         df_d = DATA['deuda']
         if not df_d.empty:
             st.dataframe(df_d[['Fecha_Vencimiento', 'Concepto', 'Saldo']], use_container_width=True)
-        else: st.success("✅ Sin deudas.")
+        else: st.info("✅ Sin deudas registradas.")
         
     with c_cap:
         st.subheader("🏗️ CAPEX")
@@ -470,3 +493,4 @@ elif menu == "3. FINANZAS & RUNWAY":
         if not df_cap.empty:
             df_cap['Avance'] = (df_cap['Monto_Acumulado_Actual'] / df_cap['Monto_Total'])
             st.dataframe(df_cap, column_config={"Avance": st.column_config.ProgressColumn("Progreso", format="%.0f%%")}, use_container_width=True)
+        else: st.info("🔨 Sin proyectos activos.")
