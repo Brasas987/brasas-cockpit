@@ -217,136 +217,126 @@ with st.sidebar:
 if menu == "1. CORPORATE OVERVIEW":
     st.header(f"🏥 Signos Vitales ({periodo_label})")
     
-    # --- CÁLCULO DE KPIs PRINCIPALES ---
+    # --- PROCESAMIENTO DE DATOS ---
     kpi_venta = 0.0
     kpi_margen_avg = 0.0
     kpi_merma_total = 0.0
     kpi_runway = 0.0
     
-    # 1. Ventas (MTD o Rolling)
+    # Variables Comerciales
+    ticket_promedio = 0.0
+    num_transacciones = 0
+    pe_diario = 0.0
+    venta_hoy = 0.0
+    
+    # 1. Ventas & Ticket Promedio
     df_v = DATA['ventas']
     if not df_v.empty:
+        # Filtro de fecha seleccionado
         mask_v = (df_v['Fecha_dt'].dt.date >= start_date.date()) & (df_v['Fecha_dt'].dt.date <= hoy.date())
-        kpi_venta = df_v[mask_v]['Monto'].sum()
-    
-    # 2. Margen (Teórico Promedio)
-    df_c = DATA['costos']
-    if not df_c.empty:
-        kpi_margen_avg = df_c['Margen_Pct'].mean() * 100
+        df_filtrada = df_v[mask_v]
+        kpi_venta = df_filtrada['Monto'].sum()
+        
+        # Venta solo de HOY (para la meta diaria)
+        venta_hoy = df_v[df_v['Fecha_dt'].dt.date == hoy.date()]['Monto'].sum()
+        
+        # Ticket Promedio
+        if 'ID_Ticket' in df_filtrada.columns:
+            df_tickets = df_filtrada.groupby('ID_Ticket')['Monto'].sum()
+            num_transacciones = df_tickets.count()
+            ticket_promedio = df_tickets.mean() if num_transacciones > 0 else 0
 
-    # 3. Merma (Dinero Perdido)
+    # 2. Margen & Merma
+    df_c = DATA['costos']
+    if not df_c.empty: kpi_margen_avg = df_c['Margen_Pct'].mean() * 100
+
     df_m = DATA['merma']
     if not df_m.empty:
         mask_m = (df_m['Fecha_dt'].dt.date >= start_date.date()) & (df_m['Fecha_dt'].dt.date <= hoy.date())
         kpi_merma_total = df_m[mask_m]['Monto_Merma'].sum()
 
-    # 4. Runway (Ultimo dato calculado por Colab)
+    # 3. Datos Financieros (Para Meta Diaria)
     df_sob = DATA['soberania']
     if not df_sob.empty:
-        # Tomamos el último disponible
-        kpi_runway = df_sob.iloc[-1].get('Runway_Dias', 0)
+        ultimo = df_sob.iloc[-1]
+        kpi_runway = ultimo.get('Runway_Dias', 0)
+        
+        # Cálculo Rápido PE (Burn Rate / Margen)
+        burn = ultimo.get('Burn_Rate_Diario', 0)
+        try:
+            ratio = float(str(ultimo.get('Ratio_Costo_Real', '0.6')).replace('%',''))
+            if ratio > 1: ratio /= 100
+        except: ratio = 0.60
+        
+        margen_contrib = 1 - ratio
+        pe_diario = burn / margen_contrib if margen_contrib > 0 else 9999
 
-    # --- RENDERIZADO DE TARJETAS ---
+    # --- VISUALIZACIÓN ---
+    
+    # 1. BLOQUE DE META DIARIA (BARRA DE PROGRESO TÁCTICA)
+    st.markdown("##### 🏁 Meta del Día (Break-even Operativo)")
+    pct_meta = min(venta_hoy / pe_diario, 1.0) if pe_diario > 0 else 0
+    cols_meta = st.columns([3, 1])
+    with cols_meta[0]:
+        st.progress(pct_meta)
+    with cols_meta[1]:
+        st.caption(f"**{pct_meta*100:.0f}%** (S/ {venta_hoy:,.0f} / {pe_diario:,.0f})")
+    
+    st.markdown("---")
+
+    # 2. TARJETAS PRINCIPALES
     col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("VENTAS TOTALES", f"S/ {kpi_venta:,.0f}", periodo_label)
-    
-    with col2:
-        st.metric("MARGEN BRUTO (TEÓRICO)", f"{kpi_margen_avg:.1f}%", "Meta: >60%")
-        
-    with col3:
-        # Gestión por Excepción: Alerta si Merma > 300
+    with col1: st.metric("VENTAS ACUMULADAS", f"S/ {kpi_venta:,.0f}", periodo_label)
+    with col2: st.metric("TICKET PROMEDIO", f"S/ {ticket_promedio:,.1f}", f"{num_transacciones} Mesas")
+    with col3: 
         delta_m = "-ALERTA" if kpi_merma_total > 300 else "Controlado"
-        st.metric("PÉRDIDA X MERMA", f"S/ {kpi_merma_total:,.0f}", delta_m, delta_color="inverse")
-        
+        st.metric("MERMA VALORIZADA", f"S/ {kpi_merma_total:,.0f}", delta_m, delta_color="inverse")
     with col4:
-        # Semáforo de Runway
         color_rw = "normal" if kpi_runway > 45 else "inverse"
         st.metric("CASH RUNWAY", f"{kpi_runway:.1f} Días", "Vida Financiera", delta_color=color_rw)
 
     st.markdown("---")
 
-    # --- GRÁFICOS CENTRALES ---
+    # 3. GRÁFICOS (Ventas y BCG)
     c_left, c_right = st.columns([2, 1])
     
-    # GRÁFICO 1: VENTAS REALES vs FORECAST vs EVENTOS
+    # Gráfico Ventas
     with c_left:
-        st.subheader("📈 Rendimiento Comercial vs Pronóstico")
-        
+        st.subheader("📈 Rendimiento Comercial")
         fig_main = go.Figure()
-        
-        # A. Historia (Ventas Reales)
         if not df_v.empty:
             hist_start = hoy - timedelta(days=30)
             mask_hist = df_v['Fecha_dt'].dt.date >= hist_start.date()
             df_hist = df_v[mask_hist].groupby('Fecha_dt')['Monto'].sum().reset_index()
-            fig_main.add_trace(go.Bar(
-                x=df_hist['Fecha_dt'], y=df_hist['Monto'], 
-                name='Venta Real', marker_color='#00A3E0'
-            ))
+            fig_main.add_trace(go.Bar(x=df_hist['Fecha_dt'], y=df_hist['Monto'], name='Venta Real', marker_color='#00A3E0'))
+            
+            # Línea de Meta en el Gráfico
+            fig_main.add_hline(y=pe_diario, line_dash="dot", line_color="green", annotation_text="Meta PE")
 
-        # B. Futuro (Forecast 006)
+        # Forecast (2 días)
         df_f = DATA['forecast']
-        if not df_f.empty:
-            if 'Venta_P50_Probable' in df_f.columns:
-                df_f['yhat'] = pd.to_numeric(df_f['Venta_P50_Probable'], errors='coerce')
-                mask_fore = (df_f['Fecha_dt'].dt.date >= hoy.date()) & (df_f['Fecha_dt'].dt.date <= (hoy + timedelta(days=7)).date())
-                df_fore_plot = df_f[mask_fore]
-                fig_main.add_trace(go.Scatter(
-                    x=df_fore_plot['Fecha_dt'], y=df_fore_plot['yhat'], 
-                    name='IA Forecast', line=dict(color='#FFA500', width=3, dash='dash')
-                ))
-            
-        # C. Contexto (Partidos y Feriados)
-        eventos_list = []
-        if not DATA['feriados'].empty:
-            df_fer = DATA['feriados'].copy()
-            df_fer['Evento'] = df_fer['Nombre_Evento'] # Estandarizar nombre
-            eventos_list.append(df_fer)
-        if not DATA['partidos'].empty:
-            eventos_list.append(DATA['partidos'])
-            
-        if eventos_list:
-            df_evt = pd.concat(eventos_list, ignore_index=True)
-            # CORRECCIÓN AQUÍ: Se agregaron los dos puntos ':'
-            if 'Fecha_dt' in df_evt.columns:
-                mask_evt = (df_evt['Fecha_dt'].dt.date >= (hoy - timedelta(days=30)).date()) & (df_evt['Fecha_dt'].dt.date <= (hoy + timedelta(days=7)).date())
-                df_evt_plot = df_evt[mask_evt]
-                if not df_evt_plot.empty:
-                    fig_main.add_trace(go.Scatter(
-                        x=df_evt_plot['Fecha_dt'], y=[0]*len(df_evt_plot), # Marcadores en el eje X
-                        mode='markers', marker=dict(symbol='star', size=12, color='white'),
-                        name='Evento', hovertext=df_evt_plot['Evento']
-                    ))
+        if not df_f.empty and 'Venta_P50_Probable' in df_f.columns:
+            df_f['yhat'] = pd.to_numeric(df_f['Venta_P50_Probable'], errors='coerce')
+            mask_fore = (df_f['Fecha_dt'].dt.date >= hoy.date()) & (df_f['Fecha_dt'].dt.date <= (hoy + timedelta(days=2)).date())
+            df_fore_plot = df_f[mask_fore]
+            fig_main.add_trace(go.Scatter(x=df_fore_plot['Fecha_dt'], y=df_fore_plot['yhat'], name='IA Forecast', line=dict(color='#FFA500', width=3, dash='dash')))
 
         fig_main.update_layout(template="plotly_dark", height=400, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig_main, use_container_width=True)
 
-    # GRÁFICO 2: MATRIZ BCG (Volumen Ventas vs Margen Costos)
+    # Gráfico BCG
     with c_right:
-        st.subheader("🧩 Matriz BCG (Productos)")
+        st.subheader("🧩 Matriz BCG")
         if not df_v.empty and not df_c.empty:
-            # 1. Calcular Volumen por Producto desde Ventas
             df_vol = df_v.groupby('Producto_ID')['Cantidad'].sum().reset_index()
-            
-            # 2. Unir con Costos para obtener Margen
             df_bcg = pd.merge(df_vol, df_c, on='Producto_ID', how='inner')
-            
             if not df_bcg.empty:
-                fig_bcg = px.scatter(
-                    df_bcg, x="Cantidad", y="Margen_Pct", size="Precio_num", 
-                    color="Menu", hover_name="Menu",
-                    labels={"Cantidad": "Volumen Ventas", "Margen_Pct": "Margen Unitario %"}
-                )
+                fig_bcg = px.scatter(df_bcg, x="Cantidad", y="Margen_Pct", size="Precio_num", color="Menu", hover_name="Menu")
                 fig_bcg.add_hline(y=60, line_dash="dot", annotation_text="Meta Margen")
                 fig_bcg.update_layout(template="plotly_dark", height=400, paper_bgcolor='rgba(0,0,0,0)', showlegend=False)
                 st.plotly_chart(fig_bcg, use_container_width=True)
-            else:
-                st.info("No hay coincidencia de IDs entre Ventas y Costos.")
-        else:
-            st.warning("Faltan datos de Ventas o Costos para la Matriz.")
-
+            else: st.info("Sin coincidencias ID.")
+        else: st.warning("Faltan datos.")
 # ==============================================================================
 # PESTAÑA 2: EFICIENCIA & COSTOS
 # ==============================================================================
@@ -404,19 +394,30 @@ elif menu == "2. EFICIENCIA & COSTOS":
 # PESTAÑA 3: FINANZAS & RUNWAY (INTEGRACION CON COLAB)
 # ==============================================================================
 elif menu == "3. FINANZAS & RUNWAY":
-    st.header("🔮 Soberanía Financiera")
+    st.header("🔮 Soberanía Financiera & Estructura")
 
     df_sob = DATA['soberania']
     
     if not df_sob.empty:
         ultimo = df_sob.iloc[-1]
         
+        # Extracción de Datos
         orden = ultimo.get('ORDEN_TESORERIA', 'SIN DATOS')
         runway_val = ultimo.get('Runway_Dias', 0)
         burn_rate = ultimo.get('Burn_Rate_Diario', 0)
         deuda_tc = ultimo.get('Deuda_TC_Auditada', 0)
         
-        # --- BLOQUE DE ORDEN EJECUTIVA ---
+        # Cálculo de Equilibrio Estructural
+        try:
+            ratio = float(str(ultimo.get('Ratio_Costo_Real', '0.6')).replace('%',''))
+            if ratio > 1: ratio /= 100
+        except: ratio = 0.60
+        margen_contrib = 1 - ratio
+        
+        pe_diario = burn_rate / margen_contrib if margen_contrib > 0 else 0
+        pe_mensual = pe_diario * 30
+        
+        # --- BLOQUE 1: GESTIÓN DE TESORERÍA (ORDEN) ---
         st.markdown(f"### 📢 ORDEN DEL DÍA")
         if "ALERTA" in str(orden):
             st.markdown(f'<div class="critical-box">🚨 {orden}</div>', unsafe_allow_html=True)
@@ -427,46 +428,45 @@ elif menu == "3. FINANZAS & RUNWAY":
             
         st.markdown("---")
 
-        # 1. GRÁFICO DE RUNWAY
-        st.subheader("✈️ Evolución de tu Pista de Aterrizaje")
+        # --- BLOQUE 2: PUNTO DE EQUILIBRIO ESTRUCTURAL ---
+        st.subheader("⚖️ Estructura de Costos (Break-even Analysis)")
+        c_pe1, c_pe2, c_pe3 = st.columns(3)
+        
+        with c_pe1:
+            st.metric("COSTO FIJO DIARIO", f"S/ {burn_rate:,.2f}", "Burn Rate Operativo")
+        with c_pe2:
+            st.metric("PE DIARIO (META)", f"S/ {pe_diario:,.2f}", f"Margen Real: {margen_contrib*100:.1f}%")
+        with c_pe3:
+            st.metric("PE MENSUAL (META)", f"S/ {pe_mensual:,.0f}", "Para no perder dinero")
+            
+        st.markdown("---")
+
+        # --- BLOQUE 3: RUNWAY & DEUDA ---
+        st.subheader("✈️ Evolución de Supervivencia")
         fig_run = px.line(df_sob, x='Fecha_dt', y='Runway_Dias', markers=True)
         fig_run.add_hline(y=45, line_dash="dot", line_color="green", annotation_text="Objetivo (45)")
         fig_run.add_hline(y=30, line_dash="dot", line_color="red", annotation_text="Peligro (30)")
         fig_run.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig_run, use_container_width=True)
 
-        # 2. DETALLE DE MÉTRICAS
-        c_fin1, c_fin2 = st.columns(2)
-        with c_fin1:
-            st.metric("BURN RATE DIARIO", f"S/ {burn_rate:,.2f}", "Costo de operar 1 día")
-        with c_fin2:
-            st.metric("DEUDA PASIVA (TC)", f"S/ {deuda_tc:,.2f}", "Deuda Corriente")
+        st.metric("DEUDA PASIVA (TC)", f"S/ {deuda_tc:,.2f}", "Deuda Corriente a Pagar")
 
     else:
-        st.warning("⚠️ El módulo de Forecast no ha generado datos de Soberanía Financiera. Ejecuta el Colab.")
+        st.warning("⚠️ El módulo de Forecast no ha generado datos. Ejecuta Colab.")
 
-    # 3. DEUDAS CON PROVEEDORES
+    # DEUDAS PROVEEDORES Y CAPEX
     st.markdown("---")
-    st.subheader("📉 Deudas con Proveedores (Cuentas por Pagar)")
-    df_d = DATA['deuda']
-    if not df_d.empty:
-        total_deuda = df_d['Saldo'].sum()
-        st.metric("TOTAL PENDIENTE PROVEEDORES", f"S/ {total_deuda:,.2f}")
-        st.dataframe(df_d[['Fecha_Vencimiento', 'Concepto', 'Saldo']], use_container_width=True)
-    else:
-        st.success("✅ Sin deudas registradas en Libros Contables.")
-
-    # 4. CAPEX
-    st.subheader("🏗️ Proyectos de Inversión (CAPEX)")
-    df_cap = DATA['capex']
-    if not df_cap.empty:
-        df_cap['Avance'] = (df_cap['Monto_Acumulado_Actual'] / df_cap['Monto_Total'])
-        st.dataframe(
-            df_cap, 
-            column_config={
-                "Avance": st.column_config.ProgressColumn("Progreso", min_value=0, max_value=1, format="%.0f%%")
-            },
-            use_container_width=True
-        )
-    else:
-        st.info("No hay proyectos activos.")
+    c_prov, c_cap = st.columns(2)
+    with c_prov:
+        st.subheader("📉 Deudas Proveedores")
+        df_d = DATA['deuda']
+        if not df_d.empty:
+            st.dataframe(df_d[['Fecha_Vencimiento', 'Concepto', 'Saldo']], use_container_width=True)
+        else: st.success("✅ Sin deudas.")
+        
+    with c_cap:
+        st.subheader("🏗️ CAPEX")
+        df_cap = DATA['capex']
+        if not df_cap.empty:
+            df_cap['Avance'] = (df_cap['Monto_Acumulado_Actual'] / df_cap['Monto_Total'])
+            st.dataframe(df_cap, column_config={"Avance": st.column_config.ProgressColumn("Progreso", format="%.0f%%")}, use_container_width=True)
