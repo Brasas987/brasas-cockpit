@@ -87,12 +87,12 @@ def connect_google_sheets():
 # --- MAPA DE ARQUITECTURA DE ARCHIVOS (IDs REALES) ---
 # ⚠️ IMPORTANTE: Asegúrate de que estos IDs sean los correctos en GitHub
 IDS = {
-    "REGISTROS":  "PON_AQUI_ID_REGISTROS_VENTAS_COMPRAS",
-    "LIBROS":     "PON_AQUI_ID_001_LIBROS_CONTABLES",
-    "COSTOS":     "PON_AQUI_ID_003_ANALISIS_COSTOS",
-    "INVENTARIO": "PON_AQUI_ID_004_INVENTARIO",
-    "CAJA":       "PON_AQUI_ID_005_CAJA",
-    "FORECAST":   "PON_AQUI_ID_006_FORECAST"
+    "REGISTROS":  "https://docs.google.com/spreadsheets/d/1pbpbkZWH6RHpUwdjrTFGtkNAi4ameR2PJZVbR5OPeZQ/edit?gid=1445845805#gid=1445845805",
+    "LIBROS":     "https://docs.google.com/spreadsheets/d/1-juSBgRcNdKWNjDL6ZuKcBIVVQXtnpL3qCR9Z1AWQyU/edit?gid=0#gid=0",
+    "COSTOS":     "https://docs.google.com/spreadsheets/d/1JNKE-5nfOsJ7U9k0bCLAW-xjOzSGRG15rdGdWrC3h8U/edit?gid=1976317468#gid=1976317468",
+    "INVENTARIO": "https://docs.google.com/spreadsheets/d/1vDI6y_xN-abIFkv9z63rc94PTnCtJURC4r7vN3RCeLo/edit?gid=10562125#gid=10562125",
+    "CAJA":       "https://docs.google.com/spreadsheets/d/1Ck6Um7PG8uZ626x9kMvf1tMlBckBUHBjy6dTYRxUIZY/edit?gid=1914701014#gid=1914701014",
+    "FORECAST":   "https://docs.google.com/spreadsheets/d/1rmb0tvFhNQgiVOvUC3u5IxeBSA1w4HiY5lr13sD1VU0/edit?gid=0#gid=0"
 }
 
 # ==============================================================================
@@ -371,7 +371,7 @@ elif menu == "2. EFICIENCIA & COSTOS":
             fig_tree.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig_tree, use_container_width=True)
         else:
-            st.info("No hay registros de Merma en el archivo 004.")
+            st.info("No hay registros de Merma en el Inventario")
 
     # 2. CONTROL DE CALIDAD COMPRAS (003)
     with col_ef2:
