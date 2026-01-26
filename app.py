@@ -494,3 +494,95 @@ elif menu == "3. FINANZAS & RUNWAY":
             df_cap['Avance'] = (df_cap['Monto_Acumulado_Actual'] / df_cap['Monto_Total'])
             st.dataframe(df_cap, column_config={"Avance": st.column_config.ProgressColumn("Progreso", format="%.0f%%")}, use_container_width=True)
         else: st.info("🔨 Sin proyectos activos.")
+
+# ==============================================================================
+# PESTAÑA 4: MARKETING & GROWTH (INGENIERÍA DE MENÚ)
+# ==============================================================================
+elif menu == "4. MARKETING & GROWTH":
+    st.header("🚀 Marketing Science (Fase 1)")
+
+    # 1. CARGAR DATOS
+    # Asegúrate de subir el archivo 'OUT_Menu_Engineering.csv' a tu GitHub junto con este código
+    try:
+        df_menu_eng = pd.read_csv('OUT_Menu_Engineering.csv')
+        
+        # --- SECCIÓN 1: MATRIZ ESTRATÉGICA (KASAVANA & SMITH) ---
+        st.subheader("🎯 Matriz de Ingeniería de Menú")
+        st.info("💡 Este mapa te dice qué platos son **Rentables** (Arriba) y cuáles son **Populares** (Derecha).")
+
+        # Crear Gráfico de Cuadrantes
+        fig_matrix = px.scatter(
+            df_menu_eng,
+            x="Mix_Percent",
+            y="Margen",
+            color="Clasificacion",
+            size="Total_Venta", # El tamaño de la burbuja es el dinero que trajo
+            hover_name="Menu",
+            hover_data=["Accion_Sugerida", "Foto_Calidad", "Precio_num"],
+            color_discrete_map={
+                "⭐ ESTRELLA": "#00FF00",  # Verde Neón (Lo mejor)
+                "🐎 CABALLO BATALLA": "#FFFF00", # Amarillo (Popular pero poco margen)
+                "🧩 PUZZLE": "#00FFFF",  # Cyan (Rentable pero impopular)
+                "🐶 PERRO": "#FF0000"   # Rojo (Ni rentable ni popular)
+            },
+            title="Mapa de Rentabilidad vs Popularidad"
+        )
+
+        # Líneas de Referencia (Promedios Dinámicos)
+        avg_mix = df_menu_eng['Mix_Percent'].mean()
+        avg_margen = df_menu_eng['Margen'].mean()
+        
+        # Dibujar las líneas que dividen los 4 cuadrantes
+        fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
+        fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
+
+        # Ajustes visuales oscuros
+        fig_matrix.update_layout(
+            template="plotly_dark", 
+            paper_bgcolor='rgba(0,0,0,0)', 
+            height=550,
+            xaxis_title="Popularidad (% del Mix de Ventas)",
+            yaxis_title="Rentabilidad (Margen en Soles)"
+        )
+        st.plotly_chart(fig_matrix, use_container_width=True)
+
+        # --- SECCIÓN 2: TABLERO DE COMANDO (PLAN DE ACCIÓN) ---
+        st.markdown("### ⚡ Órdenes del CMO (Plan de Acción)")
+        
+        # Filtros interactivos para que te enfoques
+        filtro_accion = st.radio(
+            "Filtrar por prioridad:", 
+            ["TODOS", "🚨 URGENTE (Perros y Puzzles)", "⭐ ESTRELLAS (Cuidar)"], 
+            horizontal=True
+        )
+        
+        df_show = df_menu_eng.copy()
+        
+        if filtro_accion == "🚨 URGENTE (Perros y Puzzles)":
+            df_show = df_show[df_show['Clasificacion'].isin(['🐶 PERRO', '🧩 PUZZLE'])]
+        elif filtro_accion == "⭐ ESTRELLAS (Cuidar)":
+            df_show = df_show[df_show['Clasificacion'] == '⭐ ESTRELLA']
+
+        # Mostrar Tabla Bonita
+        st.dataframe(
+            df_show[['Menu', 'Clasificacion', 'Foto_Calidad', 'Accion_Sugerida', 'Precio_num']],
+            column_config={
+                "Menu": "Plato",
+                "Foto_Calidad": st.column_config.NumberColumn("Calidad Foto", format="%d ⭐"),
+                "Precio_num": st.column_config.NumberColumn("Precio", format="S/ %.2f"),
+                "Clasificacion": st.column_config.TextColumn("Categoría", width="medium"),
+                "Accion_Sugerida": st.column_config.TextColumn("🔥 Acción Recomendada", width="large")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # KPI Resumen (Métricas de Vanidad vs Realidad)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Platos Estrella", len(df_menu_eng[df_menu_eng['Clasificacion']=='⭐ ESTRELLA']))
+        col2.metric("Platos Perro", len(df_menu_eng[df_menu_eng['Clasificacion']=='🐶 PERRO']))
+        col3.metric("Oportunidades (Puzzles)", len(df_menu_eng[df_menu_eng['Clasificacion']=='🧩 PUZZLE']))
+
+    except FileNotFoundError:
+        st.error("⚠️ Falta el archivo de datos: 'OUT_Menu_Engineering.csv'")
+        st.warning("👉 Pasos para solucionar: \n1. Ejecuta tu Google Colab (Módulo Marketing). \n2. Descarga el archivo 'OUT_Menu_Engineering.csv' de tu Drive. \n3. Súbelo aquí junto a este código.")
