@@ -87,12 +87,12 @@ def connect_google_sheets():
 # --- MAPA DE ARQUITECTURA DE ARCHIVOS (IDs REALES) ---
 # ⚠️ IMPORTANTE: Asegúrate de que estos IDs sean los correctos en GitHub
 IDS = {
-    "REGISTROS":  "https://docs.google.com/spreadsheets/d/1pbpbkZWH6RHpUwdjrTFGtkNAi4ameR2PJZVbR5OPeZQ/edit?gid=1445845805#gid=1445845805",
-    "LIBROS":     "https://docs.google.com/spreadsheets/d/1-juSBgRcNdKWNjDL6ZuKcBIVVQXtnpL3qCR9Z1AWQyU/edit?gid=988070039#gid=988070039",
-    "COSTOS":     "https://docs.google.com/spreadsheets/d/1JNKE-5nfOsJ7U9k0bCLAW-xjOzSGRG15rdGdWrC3h8U/edit?gid=1976317468#gid=1976317468",
-    "INVENTARIO": "https://docs.google.com/spreadsheets/d/1vDI6y_xN-abIFkv9z63rc94PTnCtJURC4r7vN3RCeLo/edit?gid=10562125#gid=10562125",
-    "CAJA":       "https://docs.google.com/spreadsheets/d/1Ck6Um7PG8uZ626x9kMvf1tMlBckBUHBjy6dTYRxUIZY/edit?gid=0#gid=0",
-    "FORECAST":   "https://docs.google.com/spreadsheets/d/1rmb0tvFhNQgiVOvUC3u5IxeBSA1w4HiY5lr13sD1VU0/edit?gid=1023849055#gid=1023849055"
+    "REGISTROS":  "PON_AQUI_ID_REGISTROS_VENTAS_COMPRAS",
+    "LIBROS":     "PON_AQUI_ID_001_LIBROS_CONTABLES",
+    "COSTOS":     "PON_AQUI_ID_003_ANALISIS_COSTOS",
+    "INVENTARIO": "PON_AQUI_ID_004_INVENTARIO",
+    "CAJA":       "PON_AQUI_ID_005_CAJA",
+    "FORECAST":   "PON_AQUI_ID_006_FORECAST"
 }
 
 # ==============================================================================
@@ -243,6 +243,7 @@ if menu == "1. CORPORATE OVERVIEW":
     # 4. Runway (Ultimo dato calculado por Colab)
     df_sob = DATA['soberania']
     if not df_sob.empty:
+        # Tomamos el último disponible
         kpi_runway = df_sob.iloc[-1].get('Runway_Dias', 0)
 
     # --- RENDERIZADO DE TARJETAS ---
@@ -288,7 +289,6 @@ if menu == "1. CORPORATE OVERVIEW":
         # B. Futuro (Forecast 006)
         df_f = DATA['forecast']
         if not df_f.empty:
-            # Colab genera 'Venta_P50_Probable'
             if 'Venta_P50_Probable' in df_f.columns:
                 df_f['yhat'] = pd.to_numeric(df_f['Venta_P50_Probable'], errors='coerce')
                 mask_fore = (df_f['Fecha_dt'].dt.date >= hoy.date()) & (df_f['Fecha_dt'].dt.date <= (hoy + timedelta(days=7)).date())
@@ -299,7 +299,6 @@ if menu == "1. CORPORATE OVERVIEW":
                 ))
             
         # C. Contexto (Partidos y Feriados)
-        # Combinamos Feriados y Partidos en un solo set de eventos
         eventos_list = []
         if not DATA['feriados'].empty:
             df_fer = DATA['feriados'].copy()
@@ -310,4 +309,164 @@ if menu == "1. CORPORATE OVERVIEW":
             
         if eventos_list:
             df_evt = pd.concat(eventos_list, ignore_index=True)
-            if 'Fecha_dt' in df_evt.columns
+            # CORRECCIÓN AQUÍ: Se agregaron los dos puntos ':'
+            if 'Fecha_dt' in df_evt.columns:
+                mask_evt = (df_evt['Fecha_dt'].dt.date >= (hoy - timedelta(days=30)).date()) & (df_evt['Fecha_dt'].dt.date <= (hoy + timedelta(days=7)).date())
+                df_evt_plot = df_evt[mask_evt]
+                if not df_evt_plot.empty:
+                    fig_main.add_trace(go.Scatter(
+                        x=df_evt_plot['Fecha_dt'], y=[0]*len(df_evt_plot), # Marcadores en el eje X
+                        mode='markers', marker=dict(symbol='star', size=12, color='white'),
+                        name='Evento', hovertext=df_evt_plot['Evento']
+                    ))
+
+        fig_main.update_layout(template="plotly_dark", height=400, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig_main, use_container_width=True)
+
+    # GRÁFICO 2: MATRIZ BCG (Volumen Ventas vs Margen Costos)
+    with c_right:
+        st.subheader("🧩 Matriz BCG (Productos)")
+        if not df_v.empty and not df_c.empty:
+            # 1. Calcular Volumen por Producto desde Ventas
+            df_vol = df_v.groupby('Producto_ID')['Cantidad'].sum().reset_index()
+            
+            # 2. Unir con Costos para obtener Margen
+            df_bcg = pd.merge(df_vol, df_c, on='Producto_ID', how='inner')
+            
+            if not df_bcg.empty:
+                fig_bcg = px.scatter(
+                    df_bcg, x="Cantidad", y="Margen_Pct", size="Precio_num", 
+                    color="Menu", hover_name="Menu",
+                    labels={"Cantidad": "Volumen Ventas", "Margen_Pct": "Margen Unitario %"}
+                )
+                fig_bcg.add_hline(y=60, line_dash="dot", annotation_text="Meta Margen")
+                fig_bcg.update_layout(template="plotly_dark", height=400, paper_bgcolor='rgba(0,0,0,0)', showlegend=False)
+                st.plotly_chart(fig_bcg, use_container_width=True)
+            else:
+                st.info("No hay coincidencia de IDs entre Ventas y Costos.")
+        else:
+            st.warning("Faltan datos de Ventas o Costos para la Matriz.")
+
+# ==============================================================================
+# PESTAÑA 2: EFICIENCIA & COSTOS
+# ==============================================================================
+elif menu == "2. EFICIENCIA & COSTOS":
+    st.header("⚙️ Análisis de Desperdicios y Compras")
+
+    col_ef1, col_ef2 = st.columns(2)
+    
+    # 1. RANKING DE MERMA (004)
+    with col_ef1:
+        st.subheader("🗑️ Ranking de Pérdidas (Merma)")
+        df_m = DATA['merma']
+        if not df_m.empty:
+            df_tree = df_m.groupby('Insumo')['Monto_Merma'].sum().reset_index()
+            df_tree['Merma_Abs'] = df_tree['Monto_Merma'].abs()
+            
+            fig_tree = px.treemap(
+                df_tree, path=['Insumo'], values='Merma_Abs',
+                color='Merma_Abs', color_continuous_scale='Reds',
+                title="Merma Valorizada por Insumo"
+            )
+            fig_tree.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig_tree, use_container_width=True)
+        else:
+            st.info("No hay registros de Merma en el archivo 004.")
+
+    # 2. CONTROL DE CALIDAD COMPRAS (003)
+    with col_ef2:
+        st.subheader("🛡️ Compras No Convertibles (Mala Calidad)")
+        df_qc = DATA['qc']
+        if not df_qc.empty:
+            st.dataframe(df_qc, use_container_width=True)
+            if 'Total_Pagado' in df_qc.columns:
+                 total_bad = pd.to_numeric(df_qc['Total_Pagado'].astype(str).str.replace(r'[S/,]', '', regex=True), errors='coerce').sum()
+                 st.metric("TOTAL PERDIDO EN COMPRAS MALAS", f"S/ {total_bad:,.2f}", delta="-QC FAIL", delta_color="inverse")
+        else:
+            st.success("✅ Excelente. No hay reportes de compras rechazadas.")
+
+    st.markdown("---")
+    
+    # 3. GAP FOOD COST (Inventario Teorico vs Real)
+    st.subheader("⚖️ Discrepancia de Inventario (Gap Analysis)")
+    if not df_m.empty and 'Stock_teorico_gr' in df_m.columns:
+        df_gap = df_m.copy()
+        df_gap['Gap'] = df_gap['Stock_teorico_gr'] - df_gap['Stock_real_gr']
+        df_gap = df_gap.sort_values('Gap', ascending=False).head(10)
+        
+        fig_gap = px.bar(df_gap, x='Insumo', y='Gap', color='Gap', title="Diferencia en Gramos (Teórico - Real)")
+        fig_gap.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig_gap, use_container_width=True)
+    else:
+        st.info("Cargando datos de comparación de stocks...")
+
+# ==============================================================================
+# PESTAÑA 3: FINANZAS & RUNWAY (INTEGRACION CON COLAB)
+# ==============================================================================
+elif menu == "3. FINANZAS & RUNWAY":
+    st.header("🔮 Soberanía Financiera")
+
+    df_sob = DATA['soberania']
+    
+    if not df_sob.empty:
+        ultimo = df_sob.iloc[-1]
+        
+        orden = ultimo.get('ORDEN_TESORERIA', 'SIN DATOS')
+        runway_val = ultimo.get('Runway_Dias', 0)
+        burn_rate = ultimo.get('Burn_Rate_Diario', 0)
+        deuda_tc = ultimo.get('Deuda_TC_Auditada', 0)
+        
+        # --- BLOQUE DE ORDEN EJECUTIVA ---
+        st.markdown(f"### 📢 ORDEN DEL DÍA")
+        if "ALERTA" in str(orden):
+            st.markdown(f'<div class="critical-box">🚨 {orden}</div>', unsafe_allow_html=True)
+        elif "CRECIMIENTO" in str(ultimo.get('STATUS','')):
+            st.markdown(f'<div class="success-box">🚀 {orden}</div>', unsafe_allow_html=True)
+        else:
+            st.info(f"🛡️ {orden}")
+            
+        st.markdown("---")
+
+        # 1. GRÁFICO DE RUNWAY
+        st.subheader("✈️ Evolución de tu Pista de Aterrizaje")
+        fig_run = px.line(df_sob, x='Fecha_dt', y='Runway_Dias', markers=True)
+        fig_run.add_hline(y=45, line_dash="dot", line_color="green", annotation_text="Objetivo (45)")
+        fig_run.add_hline(y=30, line_dash="dot", line_color="red", annotation_text="Peligro (30)")
+        fig_run.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig_run, use_container_width=True)
+
+        # 2. DETALLE DE MÉTRICAS
+        c_fin1, c_fin2 = st.columns(2)
+        with c_fin1:
+            st.metric("BURN RATE DIARIO", f"S/ {burn_rate:,.2f}", "Costo de operar 1 día")
+        with c_fin2:
+            st.metric("DEUDA PASIVA (TC)", f"S/ {deuda_tc:,.2f}", "Deuda Corriente")
+
+    else:
+        st.warning("⚠️ El módulo de Forecast no ha generado datos de Soberanía Financiera. Ejecuta el Colab.")
+
+    # 3. DEUDAS CON PROVEEDORES
+    st.markdown("---")
+    st.subheader("📉 Deudas con Proveedores (Cuentas por Pagar)")
+    df_d = DATA['deuda']
+    if not df_d.empty:
+        total_deuda = df_d['Saldo'].sum()
+        st.metric("TOTAL PENDIENTE PROVEEDORES", f"S/ {total_deuda:,.2f}")
+        st.dataframe(df_d[['Fecha_Vencimiento', 'Concepto', 'Saldo']], use_container_width=True)
+    else:
+        st.success("✅ Sin deudas registradas en Libros Contables.")
+
+    # 4. CAPEX
+    st.subheader("🏗️ Proyectos de Inversión (CAPEX)")
+    df_cap = DATA['capex']
+    if not df_cap.empty:
+        df_cap['Avance'] = (df_cap['Monto_Acumulado_Actual'] / df_cap['Monto_Total'])
+        st.dataframe(
+            df_cap, 
+            column_config={
+                "Avance": st.column_config.ProgressColumn("Progreso", min_value=0, max_value=1, format="%.0f%%")
+            },
+            use_container_width=True
+        )
+    else:
+        st.info("No hay proyectos activos.")
