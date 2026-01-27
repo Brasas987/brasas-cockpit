@@ -496,45 +496,97 @@ elif menu == "3. FINANZAS & RUNWAY":
             st.dataframe(df_cap, column_config={"Avance": st.column_config.ProgressColumn("Progreso", format="%.0f%%")}, use_container_width=True)
         else: st.info("🔨 Sin proyectos activos.")
 
+# ==============================================================================
+# PESTAÑA 4: MARKETING & GROWTH (INGENIERÍA DE MENÚ)
+# ==============================================================================
+
 elif menu == "4. MARKETING & GROWTH":
-    st.header("🕵️ MODO DIAGNÓSTICO: Marketing")
+    st.header("🚀 Marketing Science (En Vivo)")
 
     try:
-        # 1. VERIFICAR IDENTIDAD
-        client = connect_google_sheets()
-        email_robot = client.auth.service_account_email
-        st.info(f"🤖 **IDENTIDAD DEL ROBOT:** `{email_robot}`")
-        st.caption("👉 Verifica que ESTE correo exacto tenga permiso de 'Editor' en tu archivo.")
-
-        # 2. VERIFICAR ACCESO AL ARCHIVO
-        url_archivo = "https://docs.google.com/spreadsheets/d/T1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit"
-        st.write(f"📂 Intentando abrir archivo...")
+        # --- MOTOR ROBUSTO: GSPREAD (EL MISMO DE FINANZAS) ---
+        # 1. Usamos tu conexión existente (la que ya funciona)
+        client = connect_google_sheets() 
         
+        # 2. Abrimos el archivo por URL
+        url_archivo = "https://docs.google.com/spreadsheets/d/T1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit"
         sh = client.open_by_url(url_archivo)
-        st.success(f"✅ ¡Archivo encontrado! Nombre: **{sh.title}**")
-
-        # 3. VERIFICAR PESTAÑAS
-        lista_pestanas = [ws.title for ws in sh.worksheets()]
-        st.write(f"📑 Pestañas disponibles: {lista_pestanas}")
-
-        if "OUT_Menu_Engineering" in lista_pestanas:
-            st.success("✅ Pestaña 'OUT_Menu_Engineering' ENCONTRADA.")
+        
+        # 3. Buscamos la pestaña
+        ws = sh.worksheet("OUT_Menu_Engineering")
+        
+        # 4. Leemos los datos
+        data = ws.get_all_records()
+        df_menu_eng = pd.DataFrame(data)
+        
+        if df_menu_eng.empty:
+            st.warning("⚠️ La hoja 'OUT_Menu_Engineering' existe pero no tiene datos (filas vacías).")
+            st.stop()
             
-            # 4. LEER DATOS
-            ws = sh.worksheet("OUT_Menu_Engineering")
-            data = ws.get_all_records()
-            st.write(f"📊 Filas leídas: {len(data)}")
-            
-            if len(data) > 0:
-                st.dataframe(pd.DataFrame(data).head())
-            else:
-                st.warning("⚠️ La pestaña existe pero está VACÍA (0 filas de datos).")
-        else:
-            st.error(f"❌ NO encuentro la pestaña 'OUT_Menu_Engineering'. Revisa espacios en blanco o mayúsculas.")
+        # --- PROCESAMIENTO DE DATOS ---
+        # Asegurar tipos numéricos
+        cols_num = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num', 'Foto_Calidad']
+        for col in cols_num:
+            if col in df_menu_eng.columns:
+                df_menu_eng[col] = pd.to_numeric(df_menu_eng[col], errors='coerce').fillna(0)
+
+        # --- SECCIÓN 1: MATRIZ ESTRATÉGICA ---
+        st.subheader("🎯 Matriz de Ingeniería de Menú")
+        st.info("💡 **Eje Y:** Rentabilidad (Ganancia) | **Eje X:** Popularidad (Ventas)")
+
+        # Gráfico de Cuadrantes
+        fig_matrix = px.scatter(
+            df_menu_eng,
+            x="Mix_Percent",
+            y="Margen",
+            color="Clasificacion",
+            size="Total_Venta", 
+            hover_name="Menu",
+            hover_data=["Accion_Sugerida", "Precio_num"],
+            color_discrete_map={
+                "⭐ ESTRELLA": "#00FF00",  
+                "🐎 CABALLO BATALLA": "#FFFF00", 
+                "🧩 PUZZLE": "#00FFFF", 
+                "🐶 PERRO": "#FF0000"   
+            },
+            title="Mapa de Rentabilidad vs Popularidad"
+        )
+        
+        # Líneas promedio
+        avg_mix = df_menu_eng['Mix_Percent'].mean()
+        avg_margen = df_menu_eng['Margen'].mean()
+        fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
+        fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
+        
+        fig_matrix.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', height=550)
+        st.plotly_chart(fig_matrix, use_container_width=True)
+
+        # --- SECCIÓN 2: PLAN DE ACCIÓN ---
+        st.markdown("### ⚡ Órdenes del CMO (Plan de Acción)")
+        
+        col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+        col_kpi1.metric("⭐ Estrellas", len(df_menu_eng[df_menu_eng['Clasificacion']=='⭐ ESTRELLA']))
+        col_kpi2.metric("🐶 Perros", len(df_menu_eng[df_menu_eng['Clasificacion']=='🐶 PERRO']))
+        col_kpi3.metric("🧩 Puzzles", len(df_menu_eng[df_menu_eng['Clasificacion']=='🧩 PUZZLE']))
+
+        filtro_accion = st.radio("Filtrar:", ["TODOS", "🚨 URGENTE", "⭐ VIP"], horizontal=True)
+        
+        df_show = df_menu_eng.copy()
+        if filtro_accion == "🚨 URGENTE":
+            df_show = df_show[df_show['Clasificacion'].isin(['🐶 PERRO', '🧩 PUZZLE'])]
+        elif filtro_accion == "⭐ VIP":
+            df_show = df_show[df_show['Clasificacion'] == '⭐ ESTRELLA']
+
+        st.dataframe(
+            df_show[['Menu', 'Clasificacion', 'Foto_Calidad', 'Accion_Sugerida', 'Precio_num']],
+            column_config={
+                "Foto_Calidad": st.column_config.NumberColumn("Foto", format="%d ⭐"),
+                "Precio_num": st.column_config.NumberColumn("Precio", format="S/ %.2f")
+            },
+            use_container_width=True,
+            hide_index=True
+        )
 
     except Exception as e:
-        # AQUÍ ESTÁ LA CLAVE: Imprimimos el error "crudo" para verlo todo
-        st.error("❌ ERROR FATAL DETECTADO:")
-        st.code(repr(e)) # Muestra el error técnico real
-        st.markdown("---")
-        st.warning("Posibles causas:\n1. El correo del robot no tiene acceso.\n2. La URL del archivo está mal.\n3. Secrets tiene un formato inválido.")
+        st.error(f"❌ Error de acceso: {e}")
+        st.info("Asegúrate de compartir el archivo con: `brasas-reader@brasas-dashboard.iam.gserviceaccount.com`")
