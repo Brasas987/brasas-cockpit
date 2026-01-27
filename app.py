@@ -505,7 +505,7 @@ elif menu == "4. MARKETING & GROWTH":
     try:
         # --- MÉTODO "BYPASS": CONEXIÓN DIRECTA CSV ---
         # Pega aquí el enlace que copiaste de "Publicar en la web"
-        url_csv = "PEGA_TU_ENLACE_LARGO_AQUI_DENTRO"
+        url_csv = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIJmWfryiBKTZYd3_mkOCr3Nm4AEMSMu2gD77ro_R9bnyMpL_7c-iRsogkMuCBXQ_ImIE8u1Nja2PN/pub?gid=0&single=true&output=csv"
         
         # Leemos directo con Pandas (Sin pedir permiso al robot)
         df_menu_eng = pd.read_csv(url_csv)
