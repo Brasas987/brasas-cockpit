@@ -496,37 +496,32 @@ elif menu == "3. FINANZAS & RUNWAY":
             st.dataframe(df_cap, column_config={"Avance": st.column_config.ProgressColumn("Progreso", format="%.0f%%")}, use_container_width=True)
         else: st.info("🔨 Sin proyectos activos.")
 
+# ==============================================================================
+# PESTAÑA 4: MARKETING & GROWTH (INGENIERÍA DE MENÚ)
+# ==============================================================================
 elif menu == "4. MARKETING & GROWTH":
     st.header("🚀 Marketing Science (En Vivo)")
 
     try:
-        # --- MOTOR ROBUSTO: GSPREAD ---
-        client = connect_google_sheets() 
+        # --- MÉTODO "BYPASS": CONEXIÓN DIRECTA CSV ---
+        # Pega aquí el enlace que copiaste de "Publicar en la web"
+        url_csv = "PEGA_TU_ENLACE_LARGO_AQUI_DENTRO"
         
-        # 1. URL EXACTA (La corregida que empieza con 1ZT...)
-        url_archivo = "https://docs.google.com/spreadsheets/d/1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit"
+        # Leemos directo con Pandas (Sin pedir permiso al robot)
+        df_menu_eng = pd.read_csv(url_csv)
         
-        # 2. Abrir archivo
-        sh = client.open_by_url(url_archivo)
-        
-        # 3. Buscar pestaña
-        ws = sh.worksheet("OUT_Menu_Engineering")
-        
-        # 4. Leer datos
-        data = ws.get_all_records()
-        df_menu_eng = pd.DataFrame(data)
-        
+        # --- PROCESAMIENTO ---
         if df_menu_eng.empty:
-            st.warning("⚠️ La hoja 'OUT_Menu_Engineering' existe pero no tiene datos.")
+            st.warning("⚠️ La hoja está vacía.")
             st.stop()
             
-        # --- PROCESAMIENTO (Asegurar números) ---
+        # Limpieza de datos
         cols_num = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num', 'Foto_Calidad']
         for col in cols_num:
             if col in df_menu_eng.columns:
                 df_menu_eng[col] = pd.to_numeric(df_menu_eng[col], errors='coerce').fillna(0)
 
-        # --- GRÁFICOS ---
+        # --- GRÁFICOS (Igual que antes) ---
         st.subheader("🎯 Matriz de Ingeniería de Menú")
         
         fig_matrix = px.scatter(
@@ -537,28 +532,22 @@ elif menu == "4. MARKETING & GROWTH":
             size="Total_Venta", 
             hover_name="Menu",
             color_discrete_map={
-                "⭐ ESTRELLA": "#00FF00",  
-                "🐎 CABALLO BATALLA": "#FFFF00", 
-                "🧩 PUZZLE": "#00FFFF", 
-                "🐶 PERRO": "#FF0000"   
+                "⭐ ESTRELLA": "#00FF00", "🐎 CABALLO BATALLA": "#FFFF00", 
+                "🧩 PUZZLE": "#00FFFF", "🐶 PERRO": "#FF0000"   
             },
             title="Mapa de Rentabilidad vs Popularidad"
         )
         
-        # Líneas promedio
-        if not df_menu_eng.empty:
-            avg_mix = df_menu_eng['Mix_Percent'].mean()
-            avg_margen = df_menu_eng['Margen'].mean()
-            fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
-            fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
+        avg_mix = df_menu_eng['Mix_Percent'].mean()
+        avg_margen = df_menu_eng['Margen'].mean()
+        fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
+        fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
         
         fig_matrix.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', height=550)
         st.plotly_chart(fig_matrix, use_container_width=True)
 
-        # Tabla Resumen
         st.markdown("### ⚡ Plan de Acción")
         st.dataframe(df_menu_eng[['Menu', 'Clasificacion', 'Accion_Sugerida', 'Precio_num']], use_container_width=True, hide_index=True)
 
     except Exception as e:
-        st.error(f"❌ Error de acceso: {e}")
-        st.info(f"Confirma que compartiste el archivo con: brasas-reader@brasas-dashboard.iam.gserviceaccount.com")
+        st.error(f"❌ Error leyendo CSV: {e}")
