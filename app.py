@@ -496,45 +496,39 @@ elif menu == "3. FINANZAS & RUNWAY":
             st.dataframe(df_cap, column_config={"Avance": st.column_config.ProgressColumn("Progreso", format="%.0f%%")}, use_container_width=True)
         else: st.info("🔨 Sin proyectos activos.")
 
-# ==============================================================================
-# PESTAÑA 4: MARKETING & GROWTH (INGENIERÍA DE MENÚ)
-# ==============================================================================
-
 elif menu == "4. MARKETING & GROWTH":
     st.header("🚀 Marketing Science (En Vivo)")
 
     try:
-        # --- MOTOR ROBUSTO: GSPREAD (EL MISMO DE FINANZAS) ---
-        # 1. Usamos tu conexión existente (la que ya funciona)
+        # --- MOTOR ROBUSTO: GSPREAD ---
         client = connect_google_sheets() 
         
-        # 2. Abrimos el archivo por URL
-        url_archivo = "https://docs.google.com/spreadsheets/d/1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit?pli=1&gid=0#gid=0"
+        # 1. URL EXACTA (La corregida que empieza con 1ZT...)
+        url_archivo = "https://docs.google.com/spreadsheets/d/1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit"
+        
+        # 2. Abrir archivo
         sh = client.open_by_url(url_archivo)
         
-        # 3. Buscamos la pestaña
+        # 3. Buscar pestaña
         ws = sh.worksheet("OUT_Menu_Engineering")
         
-        # 4. Leemos los datos
+        # 4. Leer datos
         data = ws.get_all_records()
         df_menu_eng = pd.DataFrame(data)
         
         if df_menu_eng.empty:
-            st.warning("⚠️ La hoja 'OUT_Menu_Engineering' existe pero no tiene datos (filas vacías).")
+            st.warning("⚠️ La hoja 'OUT_Menu_Engineering' existe pero no tiene datos.")
             st.stop()
             
-        # --- PROCESAMIENTO DE DATOS ---
-        # Asegurar tipos numéricos
+        # --- PROCESAMIENTO (Asegurar números) ---
         cols_num = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num', 'Foto_Calidad']
         for col in cols_num:
             if col in df_menu_eng.columns:
                 df_menu_eng[col] = pd.to_numeric(df_menu_eng[col], errors='coerce').fillna(0)
 
-        # --- SECCIÓN 1: MATRIZ ESTRATÉGICA ---
+        # --- GRÁFICOS ---
         st.subheader("🎯 Matriz de Ingeniería de Menú")
-        st.info("💡 **Eje Y:** Rentabilidad (Ganancia) | **Eje X:** Popularidad (Ventas)")
-
-        # Gráfico de Cuadrantes
+        
         fig_matrix = px.scatter(
             df_menu_eng,
             x="Mix_Percent",
@@ -542,7 +536,6 @@ elif menu == "4. MARKETING & GROWTH":
             color="Clasificacion",
             size="Total_Venta", 
             hover_name="Menu",
-            hover_data=["Accion_Sugerida", "Precio_num"],
             color_discrete_map={
                 "⭐ ESTRELLA": "#00FF00",  
                 "🐎 CABALLO BATALLA": "#FFFF00", 
@@ -553,40 +546,19 @@ elif menu == "4. MARKETING & GROWTH":
         )
         
         # Líneas promedio
-        avg_mix = df_menu_eng['Mix_Percent'].mean()
-        avg_margen = df_menu_eng['Margen'].mean()
-        fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
-        fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
+        if not df_menu_eng.empty:
+            avg_mix = df_menu_eng['Mix_Percent'].mean()
+            avg_margen = df_menu_eng['Margen'].mean()
+            fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
+            fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
         
         fig_matrix.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', height=550)
         st.plotly_chart(fig_matrix, use_container_width=True)
 
-        # --- SECCIÓN 2: PLAN DE ACCIÓN ---
-        st.markdown("### ⚡ Órdenes del CMO (Plan de Acción)")
-        
-        col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
-        col_kpi1.metric("⭐ Estrellas", len(df_menu_eng[df_menu_eng['Clasificacion']=='⭐ ESTRELLA']))
-        col_kpi2.metric("🐶 Perros", len(df_menu_eng[df_menu_eng['Clasificacion']=='🐶 PERRO']))
-        col_kpi3.metric("🧩 Puzzles", len(df_menu_eng[df_menu_eng['Clasificacion']=='🧩 PUZZLE']))
-
-        filtro_accion = st.radio("Filtrar:", ["TODOS", "🚨 URGENTE", "⭐ VIP"], horizontal=True)
-        
-        df_show = df_menu_eng.copy()
-        if filtro_accion == "🚨 URGENTE":
-            df_show = df_show[df_show['Clasificacion'].isin(['🐶 PERRO', '🧩 PUZZLE'])]
-        elif filtro_accion == "⭐ VIP":
-            df_show = df_show[df_show['Clasificacion'] == '⭐ ESTRELLA']
-
-        st.dataframe(
-            df_show[['Menu', 'Clasificacion', 'Foto_Calidad', 'Accion_Sugerida', 'Precio_num']],
-            column_config={
-                "Foto_Calidad": st.column_config.NumberColumn("Foto", format="%d ⭐"),
-                "Precio_num": st.column_config.NumberColumn("Precio", format="S/ %.2f")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
+        # Tabla Resumen
+        st.markdown("### ⚡ Plan de Acción")
+        st.dataframe(df_menu_eng[['Menu', 'Clasificacion', 'Accion_Sugerida', 'Precio_num']], use_container_width=True, hide_index=True)
 
     except Exception as e:
         st.error(f"❌ Error de acceso: {e}")
-        st.info("Asegúrate de compartir el archivo con: `brasas-reader@brasas-dashboard.iam.gserviceaccount.com`")
+        st.info(f"Confirma que compartiste el archivo con: brasas-reader@brasas-dashboard.iam.gserviceaccount.com")
