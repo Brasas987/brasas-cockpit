@@ -6,6 +6,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import numpy as np
+from streamlit_gsheets import GSheetsConnection
 
 # ==============================================================================
 # 1. CONFIGURACIÓN DEL SISTEMA Y ESTILO (PALANTIR DARK MODE)
@@ -499,12 +500,18 @@ elif menu == "3. FINANZAS & RUNWAY":
 # PESTAÑA 4: MARKETING & GROWTH (INGENIERÍA DE MENÚ)
 # ==============================================================================
 elif menu == "4. MARKETING & GROWTH":
-    st.header("🚀 Marketing Science (Fase 1)")
+    st.header("🚀 Marketing Science (En Vivo)")
 
-    # 1. CARGAR DATOS
-    # Asegúrate de subir el archivo 'OUT_Menu_Engineering.csv' a tu GitHub junto con este código
     try:
-        df_menu_eng = pd.read_csv('OUT_Menu_Engineering.csv')
+        # 1. CONEXIÓN DIRECTA A GOOGLE SHEETS 📡
+        # Usa la conexión nativa de Streamlit para leer en tiempo real sin cache (ttl=0)
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        df_menu_eng = conn.read(
+            spreadsheet="001. Resultados Marketing", # Nombre del archivo en Drive
+            worksheet="OUT_Menu_Engineering",        # Nombre de la pestaña
+            ttl=0                                    # 0 = No guardar caché, leer fresco
+        )
         
         # --- SECCIÓN 1: MATRIZ ESTRATÉGICA (KASAVANA & SMITH) ---
         st.subheader("🎯 Matriz de Ingeniería de Menú")
@@ -523,7 +530,7 @@ elif menu == "4. MARKETING & GROWTH":
                 "⭐ ESTRELLA": "#00FF00",  # Verde Neón (Lo mejor)
                 "🐎 CABALLO BATALLA": "#FFFF00", # Amarillo (Popular pero poco margen)
                 "🧩 PUZZLE": "#00FFFF",  # Cyan (Rentable pero impopular)
-                "🐶 PERRO": "#FF0000"   # Rojo (Ni rentable ni popular)
+                "🐶 PERRO": "#FF0000"    # Rojo (Ni rentable ni popular)
             },
             title="Mapa de Rentabilidad vs Popularidad"
         )
@@ -583,6 +590,6 @@ elif menu == "4. MARKETING & GROWTH":
         col2.metric("Platos Perro", len(df_menu_eng[df_menu_eng['Clasificacion']=='🐶 PERRO']))
         col3.metric("Oportunidades (Puzzles)", len(df_menu_eng[df_menu_eng['Clasificacion']=='🧩 PUZZLE']))
 
-    except FileNotFoundError:
-        st.error("⚠️ Falta el archivo de datos: 'OUT_Menu_Engineering.csv'")
-        st.warning("👉 Pasos para solucionar: \n1. Ejecuta tu Google Colab (Módulo Marketing). \n2. Descarga el archivo 'OUT_Menu_Engineering.csv' de tu Drive. \n3. Súbelo aquí junto a este código.")
+    except Exception as e:
+        st.error(f"❌ Error de Conexión en Marketing: {e}")
+        st.info("Verifica que los 'Secrets' estén configurados y que hayas compartido el archivo '001. Resultados Marketing' con el correo del servicio.")
