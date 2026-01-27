@@ -509,7 +509,7 @@ elif menu == "4. MARKETING & GROWTH":
         client = connect_google_sheets() 
         
         # 2. Abrimos el archivo por URL
-        url_archivo = "https://docs.google.com/spreadsheets/d/T1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit"
+        url_archivo = "https://docs.google.com/spreadsheets/d/1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit?pli=1&gid=0#gid=0"
         sh = client.open_by_url(url_archivo)
         
         # 3. Buscamos la pestaña
