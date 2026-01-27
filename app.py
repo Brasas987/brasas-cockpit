@@ -551,3 +551,130 @@ elif menu == "4. MARKETING & GROWTH":
 
     except Exception as e:
         st.error(f"❌ Error leyendo CSV: {e}")
+# ==============================================================================
+# PESTAÑA 5: CX & TIEMPOS
+# ==============================================================================
+elif menu == "5. CX & TIEMPOS":
+    st.header("⏱️ Speed of Service (SOS) & Calidad")
+    st.info("Objetivo: Entregar en menos de 15 minutos. (Muestreo Aleatorio)")
+
+    # 1. ENLACE CONVERTIDO A CSV (El truco automático)
+    # Tu enlace original era HTML, aquí lo forzamos a CSV
+    url_cx = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIJmWfryiBKTZYd3_mkOCr3Nm4AEMSMu2gD77ro_R9bnyMpL_7c-iRsogkMuCBXQ_ImIE8u1Nja2PN/pub?gid=1382289241&single=true&output=csv"
+
+    try:
+        # Cargar datos
+        df_cx = pd.read_csv(url_cx)
+
+        # Validación de Seguridad: Si está vacío
+        if df_cx.empty:
+            st.warning("⚠️ La base de datos de CX está vacía. Registra algunos tickets primero.")
+            st.stop()
+
+        # 2. PROCESAMIENTO DE TIEMPOS (La Matemática)
+        # Convertimos las columnas de texto a Objetos de Tiempo reales
+        # Asumimos formato dd/mm/yyyy para la fecha
+        df_cx['Fecha_dt'] = pd.to_datetime(df_cx['Fecha'], dayfirst=True, errors='coerce')
+        
+        # Función auxiliar para combinar Fecha + Hora y crear un Timestamp completo
+        def combinar_fecha_hora(row, col_hora):
+            try:
+                # Une "26/01/2026" con "13:00" y lo convierte a fecha-hora
+                return pd.to_datetime(f"{row['Fecha']} {row[col_hora]}", dayfirst=True)
+            except:
+                return pd.NaT
+
+        df_cx['Inicio_Real'] = df_cx.apply(lambda x: combinar_fecha_hora(x, 'Hora_Pedido'), axis=1)
+        df_cx['Fin_Real'] = df_cx.apply(lambda x: combinar_fecha_hora(x, 'Hora_Entrega'), axis=1)
+
+        # Cálculo de Minutos (La Resta)
+        df_cx['Minutos_Espera'] = (df_cx['Fin_Real'] - df_cx['Inicio_Real']).dt.total_seconds() / 60
+
+        # Eliminar errores (filas donde no se pudo calcular)
+        df_cx = df_cx.dropna(subset=['Minutos_Espera'])
+
+        # 3. SEMÁFORO DE VELOCIDAD (KPIs)
+        # Definimos tus estándares: <15 min (Rápido), 15-25 (Normal), >25 (Lento)
+        def clasificar_velocidad(minutos):
+            if minutos <= 15: return "🟢 RÁPIDO"
+            elif minutos <= 25: return "🟡 NORMAL"
+            else: return "🔴 LENTO"
+
+        df_cx['Status'] = df_cx['Minutos_Espera'].apply(clasificar_velocidad)
+
+        # --- DASHBOARD VISUAL ---
+
+        # FILA 1: KPIs MACRO
+        promedio_min = df_cx['Minutos_Espera'].mean()
+        pct_lentos = (len(df_cx[df_cx['Status'] == "🔴 LENTO"]) / len(df_cx)) * 100
+        total_muestras = len(df_cx)
+
+        kpi1, kpi2, kpi3 = st.columns(3)
+        
+        kpi1.metric(
+            "Tiempo Promedio", 
+            f"{promedio_min:.1f} min", 
+            delta="-2 min vs Objetivo" if promedio_min < 17 else f"+{promedio_min-15:.1f} min demora",
+            delta_color="inverse" # Si es bajo es verde (bueno)
+        )
+        
+        kpi2.metric(
+            "% Pedidos Lentos (>25m)", 
+            f"{pct_lentos:.1f}%",
+            "Meta: < 5%",
+            delta_color="inverse"
+        )
+        
+        kpi3.metric("Muestras Auditadas", f"{total_muestras} Tickets")
+
+        st.markdown("---")
+
+        # FILA 2: GRÁFICOS
+        col_graf1, col_graf2 = st.columns(2)
+
+        with col_graf1:
+            st.subheader("📊 Distribución de Tiempos")
+            # Histograma: ¿Dónde se concentra la mayoría de tus pedidos?
+            fig_hist = px.histogram(
+                df_cx, 
+                x="Minutos_Espera", 
+                nbins=10, 
+                color="Status",
+                color_discrete_map={"🟢 RÁPIDO": "green", "🟡 NORMAL": "yellow", "🔴 LENTO": "red"},
+                title="Curva de Velocidad en Cocina"
+            )
+            # Línea de meta (15 min)
+            fig_hist.add_vline(x=15, line_dash="dot", line_color="white", annotation_text="Meta (15m)")
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+        with col_graf2:
+            st.subheader("🚨 Incidencias Reportadas")
+            # Contar incidencias que NO sean "Ninguna" o "Todo OK"
+            df_incidencias = df_cx[~df_cx['Incidencia'].isin(['Ninguna', 'Todo OK', 'OK', '-'])]
+            
+            if not df_incidencias.empty:
+                # Gráfico de Pastel de problemas
+                fig_pie = px.pie(
+                    df_incidencias, 
+                    names='Incidencia', 
+                    title='Causas de Quejas / Demoras',
+                    hole=0.4
+                )
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.success("🎉 ¡Increíble! No hay incidencias negativas registradas en la muestra.")
+
+        # FILA 3: TABLA DETALLADA (Para ver quién falló)
+        st.subheader("🕵️ Auditoría de Tickets (Últimos 10)")
+        st.dataframe(
+            df_cx[['ID_Ticket', 'Fecha', 'Hora_Pedido', 'Hora_Entrega', 'Minutos_Espera', 'Status', 'Incidencia']]
+            .sort_values(by='Fecha_dt', ascending=False)
+            .head(10),
+            use_container_width=True,
+            hide_index=True
+        )
+
+    except Exception as e:
+        st.error("❌ Error procesando datos de CX.")
+        st.write(f"Detalle técnico: {e}")
+        st.info("Consejo: Revisa que en el Excel las horas estén formato '13:00' (24h) y las fechas 'dd/mm/yyyy'.")
