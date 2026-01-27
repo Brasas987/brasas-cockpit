@@ -496,88 +496,45 @@ elif menu == "3. FINANZAS & RUNWAY":
             st.dataframe(df_cap, column_config={"Avance": st.column_config.ProgressColumn("Progreso", format="%.0f%%")}, use_container_width=True)
         else: st.info("🔨 Sin proyectos activos.")
 
-# ==============================================================================
-# PESTAÑA 4: MARKETING & GROWTH (INGENIERÍA DE MENÚ)
-# ==============================================================================
 elif menu == "4. MARKETING & GROWTH":
-    st.header("🚀 Marketing Science (En Vivo)")
+    st.header("🕵️ MODO DIAGNÓSTICO: Marketing")
 
     try:
-        # --- SOLUCIÓN ROBUSTA: USAR EL MOTOR GSPREAD (EL MISMO DE FINANZAS) ---
-        # 1. Reutilizamos la función de conexión que YA funciona en tu app
-        client = connect_google_sheets() 
+        # 1. VERIFICAR IDENTIDAD
+        client = connect_google_sheets()
+        email_robot = client.auth.service_account_email
+        st.info(f"🤖 **IDENTIDAD DEL ROBOT:** `{email_robot}`")
+        st.caption("👉 Verifica que ESTE correo exacto tenga permiso de 'Editor' en tu archivo.")
+
+        # 2. VERIFICAR ACCESO AL ARCHIVO
+        url_archivo = "https://docs.google.com/spreadsheets/d/T1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit"
+        st.write(f"📂 Intentando abrir archivo...")
         
-        # 2. Abrimos el archivo usando su ID o URL
-        # (Aquí he puesto tu URL real del archivo 001)
-        sh = client.open_by_url("https://docs.google.com/spreadsheets/d/T1ZTGBv4OGpg5WRz-9T5kyPOsl6YB81mDGkDHL5Opqoo0/edit")
-        
-        # 3. Buscamos la pestaña específica
-        ws = sh.worksheet("OUT_Menu_Engineering")
-        
-        # 4. Leemos los datos "a la antigua" (infalible)
-        data = ws.get_all_records()
-        df_menu_eng = pd.DataFrame(data)
-        
-        # Validación rápida: Si está vacío (solo encabezados), forzamos error controlado
-        if df_menu_eng.empty:
-            st.warning("⚠️ La hoja 'OUT_Menu_Engineering' existe pero no tiene datos.")
-            st.stop()
+        sh = client.open_by_url(url_archivo)
+        st.success(f"✅ ¡Archivo encontrado! Nombre: **{sh.title}**")
+
+        # 3. VERIFICAR PESTAÑAS
+        lista_pestanas = [ws.title for ws in sh.worksheets()]
+        st.write(f"📑 Pestañas disponibles: {lista_pestanas}")
+
+        if "OUT_Menu_Engineering" in lista_pestanas:
+            st.success("✅ Pestaña 'OUT_Menu_Engineering' ENCONTRADA.")
             
-        # --- AQUI EMPIEZA LA MAGIA DE LOS GRÁFICOS (Esto sigue igual) ---
-        # Aseguramos tipos numéricos por si acaso
-        df_menu_eng['Margen'] = pd.to_numeric(df_menu_eng['Margen'], errors='coerce').fillna(0)
-        df_menu_eng['Mix_Percent'] = pd.to_numeric(df_menu_eng['Mix_Percent'], errors='coerce').fillna(0)
-        df_menu_eng['Total_Venta'] = pd.to_numeric(df_menu_eng['Total_Venta'], errors='coerce').fillna(0)
-
-        # --- SECCIÓN 1: MATRIZ ESTRATÉGICA (KASAVANA & SMITH) ---
-        st.subheader("🎯 Matriz de Ingeniería de Menú")
-        # ... (El resto del código de gráficos se mantiene IGUAL) ...
-        # Copia y pega aquí el resto de la lógica de gráficos que ya tenías
-        
-        # Crear Gráfico de Cuadrantes
-        fig_matrix = px.scatter(
-            df_menu_eng,
-            x="Mix_Percent",
-            y="Margen",
-            color="Clasificacion",
-            size="Total_Venta", 
-            hover_name="Menu",
-            hover_data=["Accion_Sugerida", "Foto_Calidad", "Precio_num"],
-            color_discrete_map={
-                "⭐ ESTRELLA": "#00FF00",  
-                "🐎 CABALLO BATALLA": "#FFFF00", 
-                "🧩 PUZZLE": "#00FFFF", 
-                "🐶 PERRO": "#FF0000"   
-            },
-            title="Mapa de Rentabilidad vs Popularidad"
-        )
-        
-        # Líneas de referencia
-        avg_mix = df_menu_eng['Mix_Percent'].mean()
-        avg_margen = df_menu_eng['Margen'].mean()
-        fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
-        fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
-        
-        fig_matrix.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', height=550)
-        st.plotly_chart(fig_matrix, use_container_width=True)
-
-        # ... (Añade aquí la tabla de abajo si la tenías) ...
-        # Sección 2: Tablero de Comando
-        st.markdown("### ⚡ Órdenes del CMO (Plan de Acción)")
-        filtro_accion = st.radio("Filtrar por prioridad:", ["TODOS", "🚨 URGENTE (Perros y Puzzles)", "⭐ ESTRELLAS (Cuidar)"], horizontal=True)
-        
-        df_show = df_menu_eng.copy()
-        if filtro_accion == "🚨 URGENTE (Perros y Puzzles)":
-            df_show = df_show[df_show['Clasificacion'].isin(['🐶 PERRO', '🧩 PUZZLE'])]
-        elif filtro_accion == "⭐ ESTRELLAS (Cuidar)":
-            df_show = df_show[df_show['Clasificacion'] == '⭐ ESTRELLA']
-
-        st.dataframe(
-            df_show[['Menu', 'Clasificacion', 'Foto_Calidad', 'Accion_Sugerida', 'Precio_num']],
-            use_container_width=True,
-            hide_index=True
-        )
+            # 4. LEER DATOS
+            ws = sh.worksheet("OUT_Menu_Engineering")
+            data = ws.get_all_records()
+            st.write(f"📊 Filas leídas: {len(data)}")
+            
+            if len(data) > 0:
+                st.dataframe(pd.DataFrame(data).head())
+            else:
+                st.warning("⚠️ La pestaña existe pero está VACÍA (0 filas de datos).")
+        else:
+            st.error(f"❌ NO encuentro la pestaña 'OUT_Menu_Engineering'. Revisa espacios en blanco o mayúsculas.")
 
     except Exception as e:
-        st.error(f"❌ Error leyendo Sheet: {e}")
-        st.info("Nota: Estamos usando 'connect_google_sheets()' (gspread). Verifica que el correo del robot tenga acceso Editor al archivo.")
+        # AQUÍ ESTÁ LA CLAVE: Imprimimos el error "crudo" para verlo todo
+        st.error("❌ ERROR FATAL DETECTADO:")
+        st.code(repr(e)) # Muestra el error técnico real
+        st.markdown("---")
+        st.warning("Posibles causas:\n1. El correo del robot no tiene acceso.\n2. La URL del archivo está mal.\n3. Secrets tiene un formato inválido.")
