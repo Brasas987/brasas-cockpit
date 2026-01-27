@@ -4,4 +4,4 @@ numpy
 plotly
 gspread
 oauth2client
-streamlit-gsheets-connection
+st-gsheets-connection
