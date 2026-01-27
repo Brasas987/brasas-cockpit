@@ -507,10 +507,10 @@ elif menu == "4. MARKETING & GROWTH":
         # Usa la conexión nativa de Streamlit para leer en tiempo real sin cache (ttl=0)
         conn = st.connection("gsheets", type=GSheetsConnection)
         
-        df_menu_eng = conn.read(
-            spreadsheet="001. Resultados Marketing", # Nombre del archivo en Drive
-            worksheet="OUT_Menu_Engineering",        # Nombre de la pestaña
-            ttl=0                                    # 0 = No guardar caché, leer fresco
+        ddf_menu_eng = conn.read(
+            spreadsheet="001. Resultados Marketing", # <--- ESTO ES LO QUE FALLA
+            worksheet="OUT_Menu_Engineering",
+            ttl=0 
         )
         
         # --- SECCIÓN 1: MATRIZ ESTRATÉGICA (KASAVANA & SMITH) ---
