@@ -977,59 +977,78 @@ elif menu == "4. GESTIÓN DE MARCA":
         df_final['Costo_Por_Review'] = df_final['Costo_Por_Review'].replace([np.inf, -np.inf], 0).fillna(0)
 
         # 4. DASHBOARD VISUAL
-        
-        # --- KPIs SEMANA ACTUAL (Última fila) ---
-        if not df_final.empty:
+            if not df_final.empty:
+                # Obtenemos datos de la última semana y la anterior
                 actual = df_final.iloc[-1]
                 anterior = df_final.iloc[-2] if len(df_final) > 1 else actual
                 
+                # --- A. MÉTRICAS (KPIs) ---
                 k1, k2, k3 = st.columns(3)
                 
                 # MER (Eficiencia)
                 delta_mer = actual['MER'] - anterior['MER']
-                k1.metric("MER Semanal (Eficiencia)", f"{actual['MER']:.1f}x", f"{delta_mer:.1f} vs sem ant")
+                k1.metric("MER Semanal", f"{actual['MER']:.1f}x", f"{delta_mer:.1f} vs sem ant")
                 
                 # Gasto vs Ventas
-                k2.metric("Gasto Ads", f"S/ {actual['Gasto_Ads']}", f"Gen: S/ {actual['Ventas_Reales']:.0f}")
+                k2.metric("Gasto Ads", f"S/ {actual['Gasto_Ads']}", f"Venta: S/ {actual['Ventas_Reales']:.0f}")
                 
-                # CORRECCIÓN AQUÍ ABAJO (Quité el espacio)
+                # Reputación (Reviews)
                 delta_rev = actual['Reviews'] - anterior['Reviews']
                 k3.metric("Google Stars", f"{actual['Stars']} ⭐", f"+{int(delta_rev)} Reviews nuevas")
                 
                 st.markdown("---")
-            
-            # --- GRÁFICO: LA MANDÍBULA DE COCODRILO ---
-            st.subheader("🐊 La Mandíbula de Cocodrilo (Ads vs Ventas)")
-            
-            # Usamos Plotly para doble eje interactivo
-            fig = make_subplots(specs=[[{"secondary_y": True}]])
+                
+                # --- B. GRÁFICO MANDÍBULA DE COCODRILO ---
+                st.subheader("🐊 La Mandíbula de Cocodrilo (Ads vs Ventas)")
+                
+                # Usamos Plotly para doble eje
+                fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-            # Barras: Ventas
-            fig.add_trace(
-                go.Bar(x=df_final['Semana'], y=df_final['Ventas_Reales'], name="Ventas (S/)", marker_color='#00CC96', opacity=0.6),
-                secondary_y=False
-            )
+                # Barras: Ventas
+                fig.add_trace(
+                    go.Bar(
+                        x=df_final['Semana'], 
+                        y=df_final['Ventas_Reales'], 
+                        name="Ventas (S/)", 
+                        marker_color='#00CC96', 
+                        opacity=0.6
+                    ),
+                    secondary_y=False
+                )
 
-            # Línea: Gasto Ads
-            fig.add_trace(
-                go.Scatter(x=df_final['Semana'], y=df_final['Gasto_Ads'], name="Gasto Ads (S/)", mode='lines+markers', line=dict(color='#EF553B', width=3)),
-                secondary_y=True
-            )
+                # Línea: Gasto Ads
+                fig.add_trace(
+                    go.Scatter(
+                        x=df_final['Semana'], 
+                        y=df_final['Gasto_Ads'], 
+                        name="Gasto Ads (S/)", 
+                        mode='lines+markers', 
+                        line=dict(color='#EF553B', width=3)
+                    ),
+                    secondary_y=True
+                )
 
-            # Configuración Ejes
-            fig.update_layout(title_text="Correlación: ¿Tu Gasto impulsa las Ventas?", showlegend=True)
-            fig.update_yaxes(title_text="Ventas Totales", secondary_y=False)
-            fig.update_yaxes(title_text="Inversión Ads", secondary_y=True)
+                # Configuración del Gráfico
+                fig.update_layout(
+                    title_text="Correlación: Inversión vs Retorno", 
+                    showlegend=True,
+                    height=450
+                )
+                fig.update_yaxes(title_text="Ventas Totales (S/)", secondary_y=False)
+                fig.update_yaxes(title_text="Inversión Ads (S/)", secondary_y=True)
 
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # --- TABLA DE DETALLE ---
-            with st.expander("Ver Bitácora Semanal Completa"):
-                st.dataframe(df_final.sort_values(by='Fecha_Full', ascending=False), use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # --- C. TABLA DETALLADA ---
+                with st.expander("Ver Bitácora Semanal Completa"):
+                    st.dataframe(
+                        df_final.sort_values(by='Fecha_Full', ascending=False), 
+                        use_container_width=True
+                    )
 
-        else:
-            st.info("Registra tu primera semana en el Excel para ver la magia.")
-
+            else:
+                st.info("Registra tu primera semana en el Excel para ver los gráficos.")
+                
     except Exception as e:
         st.error(f"❌ Error procesando Marca: {e}")
         st.write("Asegúrate de que 'BD_Marketing_Semanal' tenga fechas válidas y que 'BD_Ventas' esté cargada.")
