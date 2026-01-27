@@ -980,23 +980,23 @@ elif menu == "4. GESTIÓN DE MARCA":
         
         # --- KPIs SEMANA ACTUAL (Última fila) ---
         if not df_final.empty:
-            actual = df_final.iloc[-1]
-            anterior = df_final.iloc[-2] if len(df_final) > 1 else actual
-            
-            k1, k2, k3 = st.columns(3)
-            
-            # MER (Eficiencia)
-            delta_mer = actual['MER'] - anterior['MER']
-            k1.metric("MER Semanal (Eficiencia)", f"{actual['MER']:.1f}x", f"{delta_mer:.1f} vs sem ant")
-            
-            # Gasto vs Ventas
-            k2.metric("Gasto Ads", f"S/ {actual['Gasto_Ads']}", f"Gen: S/ {actual['Ventas_Reales']:.0f}")
-            
-            # Reputación
-            delta_ rev = actual['Reviews'] - anterior['Reviews']
-            k3.metric("Google Stars", f"{actual['Stars']} ⭐", f"+{int(delta_rev)} Reviews nuevas")
-            
-            st.markdown("---")
+                actual = df_final.iloc[-1]
+                anterior = df_final.iloc[-2] if len(df_final) > 1 else actual
+                
+                k1, k2, k3 = st.columns(3)
+                
+                # MER (Eficiencia)
+                delta_mer = actual['MER'] - anterior['MER']
+                k1.metric("MER Semanal (Eficiencia)", f"{actual['MER']:.1f}x", f"{delta_mer:.1f} vs sem ant")
+                
+                # Gasto vs Ventas
+                k2.metric("Gasto Ads", f"S/ {actual['Gasto_Ads']}", f"Gen: S/ {actual['Ventas_Reales']:.0f}")
+                
+                # CORRECCIÓN AQUÍ ABAJO (Quité el espacio)
+                delta_rev = actual['Reviews'] - anterior['Reviews']
+                k3.metric("Google Stars", f"{actual['Stars']} ⭐", f"+{int(delta_rev)} Reviews nuevas")
+                
+                st.markdown("---")
             
             # --- GRÁFICO: LA MANDÍBULA DE COCODRILO ---
             st.subheader("🐊 La Mandíbula de Cocodrilo (Ads vs Ventas)")
