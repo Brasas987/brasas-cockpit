@@ -193,7 +193,7 @@ with st.sidebar:
     
     # Menú de Navegación
     menu = st.radio("MENÚ ESTRATÉGICO", 
-        ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MARKETING & GROWTH"])
+        ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MARKETING & GROWTH", "5. CX & TIEMPOS"])
     
     st.markdown("---")
     
