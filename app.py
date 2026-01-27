@@ -193,7 +193,7 @@ with st.sidebar:
     
     # Menú de Navegación
     menu = st.radio("MENÚ ESTRATÉGICO", 
-        ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MARKETING & GROWTH", "5. CX & TIEMPOS"])
+        ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MARKETING & GROWTH", "5. CX & TIEMPOS", "6. GROWTH & LEALTAD"])
     
     st.markdown("---")
     
@@ -678,3 +678,236 @@ elif menu == "5. CX & TIEMPOS":
         st.error("❌ Error procesando datos de CX.")
         st.write(f"Detalle técnico: {e}")
         st.info("Consejo: Revisa que en el Excel las horas estén formato '13:00' (24h) y las fechas 'dd/mm/yyyy'.")
+
+# ==============================================================================
+# PESTAÑA 6: GROWTH & LEALTAD
+# ==============================================================================
+elif menu == "6. GROWTH & LEALTAD":
+    st.header("💎 CRM & Lealtad (Yape Mining)")
+    st.info("Estrategia: Análisis financiero de flujos digitales (Yape/Plin).")
+
+    # ---------------------------------------------------------
+    # 1. CONFIGURACIÓN Y CONEXIÓN
+    # ---------------------------------------------------------
+    # 👇 PEGA AQUÍ EL ENLACE CSV DE TU PESTAÑA 'Data_Clientes_Yape'
+    url_yape = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIJmWfryiBKTZYd3_mkOCr3Nm4AEMSMu2gD77ro_R9bnyMpL_7c-iRsogkMuCBXQ_ImIE8u1Nja2PN/pubhtml?gid=1959458691&single=true" 
+    
+    # Intentamos calcular el Ticket Promedio Global usando tu data de Ventas (si existe)
+    # Esto define la "Vara de Medir" para saber quién es VIP
+    try:
+        # Buscamos df_ventas en el entorno (debe cargarse al inicio de la app)
+        if 'df_ventas' in locals() and not df_ventas.empty and 'ID_Ticket' in df_ventas.columns:
+            # Agrupamos por Ticket para obtener el valor real por mesa
+            df_tickets_ref = df_ventas.groupby('ID_Ticket')['Monto'].sum()
+            ticket_promedio_global = df_tickets_ref.mean()
+        else:
+            ticket_promedio_global = 20.0 # Valor por defecto de seguridad
+    except:
+        ticket_promedio_global = 20.0
+
+    c_kpi1, c_kpi2 = st.columns(2)
+    c_kpi1.metric("Ticket Promedio Global (Base)", f"S/ {ticket_promedio_global:.2f}", help="Se usa para definir los umbrales VIP")
+
+    # ---------------------------------------------------------
+    # 2. CARGA Y LIMPIEZA DE DATOS (MODO MANUAL)
+    # ---------------------------------------------------------
+    try:
+        df_yape = pd.read_csv(url_yape)
+        
+        # Copia de seguridad
+        df_ingresos = df_yape.copy()
+
+        # Estandarización de nombres de columnas (Por si en Sheets usas espacios o guiones bajos)
+        # El código busca las versiones con guión bajo, si no las halla, intenta renombrar
+        mapa_cols = {
+            'Fecha de operación': 'Fecha_Operacion',
+            'Fecha de Operación': 'Fecha_Operacion',
+            'fecha': 'Fecha_Operacion',
+            'monto': 'Monto',
+            'origen': 'Origen'
+        }
+        df_ingresos.rename(columns=mapa_cols, inplace=True)
+
+        # Validación de Seguridad
+        cols_requeridas = ['Origen', 'Monto', 'Fecha_Operacion']
+        if not all(col in df_ingresos.columns for col in cols_requeridas):
+            st.error(f"❌ Error de Formato: Faltan columnas. Tu archivo debe tener: {cols_requeridas}")
+            st.write("Columnas detectadas:", df_ingresos.columns.tolist())
+            st.stop()
+
+        # Conversión de Tipos
+        # "coerce" transformará errores en NaT (Not a Time) para no romper el código
+        df_ingresos['Fecha_dt'] = pd.to_datetime(df_ingresos['Fecha_Operacion'], dayfirst=True, errors='coerce')
+        
+        # Eliminar filas con fechas inválidas (basura)
+        df_ingresos = df_ingresos.dropna(subset=['Fecha_dt'])
+        
+        # Crear columna Mes-Año para la tabla visual (Ej: 2026-01)
+        df_ingresos['Mes_Año'] = df_ingresos['Fecha_dt'].dt.strftime('%Y-%m') 
+
+        # Limpieza de Nombres de Clientes
+        def limpiar_nombre(nombre):
+            if not isinstance(nombre, str): return "Desconocido"
+            nombre = nombre.upper().strip()
+            # Lista negra de prefijos bancarios
+            prefijos = ["PLIN - ", "YAPE - ", "TRANSFERENCIA - ", "IZIPAY - ", "INTERBANK - ", "BCP - "]
+            for p in prefijos:
+                nombre = nombre.replace(p, "")
+            return nombre
+
+        df_ingresos['Cliente_Limpio'] = df_ingresos['Origen'].apply(limpiar_nombre)
+
+        # ---------------------------------------------------------
+        # 3. LÓGICA DE NEGOCIO: SEGMENTACIÓN
+        # ---------------------------------------------------------
+        fecha_hoy = pd.to_datetime("today")
+        
+        # Agrupamos por Cliente (Histórico Total)
+        df_clientes = df_ingresos.groupby('Cliente_Limpio').agg(
+            Total_Historico=('Monto', 'sum'),
+            Visitas_Totales=('Fecha_dt', 'count'),
+            Ultima_Visita=('Fecha_dt', 'max'),
+            Ticket_Maximo=('Monto', 'max') # Clave para detectar Ballenas de 1 noche
+        ).reset_index()
+
+        df_clientes['Dias_Ausente'] = (fecha_hoy - df_clientes['Ultima_Visita']).dt.days
+
+        # Definición de Umbrales Dinámicos
+        umbral_vip = ticket_promedio_global * 4        # 4x (Ej: S/ 80)
+        umbral_recurrente = ticket_promedio_global * 1.5 # 1.5x (Ej: S/ 30)
+
+        def segmentar_cliente(row):
+            total = row['Total_Historico']
+            visitas = row['Visitas_Totales']
+            dias_off = row['Dias_Ausente']
+            tk_max = row['Ticket_Maximo']
+            
+            estado = ""
+            
+            # --- CLASIFICACIÓN FINANCIERA ---
+            # 1. BALLENA (Gastó mucho en 1 sola visita)
+            if tk_max >= umbral_vip and visitas == 1:
+                estado = "🐋 BALLENA (1 Visita)"
+            
+            # 2. VIP SOCIO (Gastó mucho acumulado y vino varias veces)
+            elif total >= umbral_vip:
+                estado = "💎 VIP (Socio)"
+            
+            # 3. RECURRENTE (Gasto medio)
+            elif total >= umbral_recurrente:
+                estado = "🔥 RECURRENTE"
+            
+            # 4. CASUAL (Gasto bajo)
+            else:
+                estado = "🌱 CASUAL"
+            
+            # --- ESTADO DE RETENCIÓN (CHURN) ---
+            if dias_off > 30:
+                if "CASUAL" in estado:
+                    estado = "💤 PERDIDO"
+                else:
+                    # Mantiene su rango anterior pero con etiqueta de Dormido
+                    estado = f"💤 DORMIDO ({estado.split('(')[0].strip()})" 
+            
+            return estado
+
+        df_clientes['Segmento'] = df_clientes.apply(segmentar_cliente, axis=1)
+
+        # KPI de Cartera
+        total_vip = len(df_clientes[df_clientes['Segmento'].str.contains("VIP")])
+        c_kpi2.metric("Socios VIP Activos", total_vip, "Clientes fidelizados de alto valor")
+
+        # ---------------------------------------------------------
+        # 4. TABLERO DE COHORTES (Vista Mensual)
+        # ---------------------------------------------------------
+        # Filtramos los últimos 6 meses con datos para la tabla
+        meses_disponibles = sorted(df_ingresos['Mes_Año'].unique())[-6:] 
+        
+        if not meses_disponibles:
+            st.warning("No hay suficientes meses de datos para generar el reporte histórico.")
+        else:
+            # Pivot Table: Clientes en filas, Meses en columnas
+            df_recent = df_ingresos[df_ingresos['Mes_Año'].isin(meses_disponibles)]
+            pivot_meses = df_recent.pivot_table(
+                index='Cliente_Limpio', columns='Mes_Año', values='Monto', aggfunc='sum', fill_value=0
+            ).reset_index()
+
+            # Unir métricas con tabla mensual
+            df_final = pd.merge(df_clientes, pivot_meses, on='Cliente_Limpio', how='left').fillna(0)
+            
+            # Ordenar: Los que más han gastado en la historia van primero
+            df_final = df_final.sort_values(by='Total_Historico', ascending=False)
+
+            # --- VISUALIZACIÓN ---
+            st.divider()
+            
+            # Filtros Interactivos
+            col_search, col_filtro = st.columns([2, 1])
+            with col_search:
+                busqueda = st.text_input("🔍 Buscar Cliente:", placeholder="Nombre...")
+            with col_filtro:
+                opciones_seg = ["TODOS"] + sorted(df_final['Segmento'].unique().tolist())
+                filtro_seg = st.selectbox("Filtrar Segmento:", opciones_seg)
+
+            # Aplicar Lógica de Filtrado
+            df_display = df_final.copy()
+            
+            if busqueda:
+                df_display = df_display[df_display['Cliente_Limpio'].str.contains(busqueda.upper())]
+            
+            if filtro_seg != "TODOS":
+                df_display = df_display[df_display['Segmento'] == filtro_seg]
+
+            # Límite de filas (Top 50) para no saturar, salvo que se use búsqueda
+            if not busqueda and filtro_seg == "TODOS":
+                st.caption(f"Mostrando Top 50 de {len(df_final)} clientes. Usa el buscador para ver más.")
+                df_display = df_display.head(50)
+
+            # Definir columnas a mostrar
+            cols_fijas = ['Cliente_Limpio', 'Segmento', 'Total_Historico', 'Visitas_Totales', 'Dias_Ausente']
+            # Solo mostramos los meses que existen en la data
+            cols_meses_reales = [c for c in df_display.columns if c in meses_disponibles]
+            cols_totales = cols_fijas + cols_meses_reales
+
+            # Renderizar Tabla
+            st.dataframe(
+                df_display[cols_totales],
+                column_config={
+                    "Total_Historico": st.column_config.NumberColumn("Total Hist.", format="S/ %.2f"),
+                    "Cliente_Limpio": "Cliente",
+                    "Dias_Ausente": st.column_config.NumberColumn("Ausencia", format="%d días"),
+                    "Visitas_Totales": st.column_config.NumberColumn("Visitas", format="%d"),
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+
+            # ---------------------------------------------------------
+            # 5. ALERTAS DE ACCIÓN (La parte más importante)
+            # ---------------------------------------------------------
+            st.divider()
+            c_alert1, c_alert2 = st.columns(2)
+            
+            with c_alert1:
+                # Alerta 1: VIPs que se están yendo
+                vips_riesgo = df_final[df_final['Segmento'].str.contains("DORMIDO") & df_final['Segmento'].str.contains("VIP")]
+                if not vips_riesgo.empty:
+                    st.error(f"🚨 **ALERTA ROJA: {len(vips_riesgo)} VIPs en Riesgo**")
+                    st.caption("Eran tus mejores clientes y hace >30 días no vienen.")
+                    st.dataframe(vips_riesgo[['Cliente_Limpio', 'Total_Historico', 'Ultima_Visita']], hide_index=True)
+                else:
+                    st.success("✅ Tus VIPs están sanos y activos.")
+
+            with c_alert2:
+                # Alerta 2: Ballenas de 1 noche (Retargeting)
+                ballenas = df_final[df_final['Segmento'].str.contains("BALLENA")]
+                if not ballenas.empty:
+                    st.info(f"🎣 **OPORTUNIDAD: {len(ballenas)} Ballenas Detectadas**")
+                    st.caption("Gastaron mucho en 1 sola visita. ¡Invítales algo para que vuelvan!")
+                    st.dataframe(ballenas[['Cliente_Limpio', 'Total_Historico', 'Fecha_Operacion' if 'Fecha_Operacion' in ballenas.columns else 'Ultima_Visita']], hide_index=True)
+                else:
+                    st.info("No hay 'Ballenas de una noche' recientes.")
+
+    except Exception as e:
+        st.error(f"❌ Error leyendo datos: {e}")
+        st.warning("Verifica que tu pestaña tenga exactamente: 'Origen', 'Monto', 'Fecha_Operacion'")
