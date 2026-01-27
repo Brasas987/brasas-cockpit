@@ -919,20 +919,18 @@ elif menu == "7. GESTIÓN DE MARCA":
     st.header("📢 Gestión de Marca (MER)")
     st.info("Objetivo: Abrir la 'Mandíbula de Cocodrilo'. Gasto estable, Ventas crecientes.")
 
-    # 1. CARGA SEGURA DE DATOS
-    url_marketing = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSvbSRzYorHvUzcXl_GutWeXA6KI6XH8et1qPK6Z8TQhQiTQbgvubOmqZO3bEbWMifqdP7xcUoWwhjr/pubhtml?gid=1643539601&single=true"
-    
+    # 1. CONFIGURACIÓN: ENLACE PÚBLICO
+    # 👇 PEGA AQUÍ TU ENLACE CSV DE MARKETING
+    url_marketing = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSvbSRzYorHvUzcXl_GutWeXA6KI6XH8et1qPK6Z8TQhQiTQbgvubOmqZO3bEbWMifqdP7xcUoWwhjr/pubhtml?gid=1643539601&single=true" 
+
     # Verificación de df_ventas
     if 'df_ventas' not in locals() or df_ventas.empty:
         st.warning("⚠️ No se detectaron Ventas cargadas. Ve a 'Finanzas' primero.")
     
-    elif uploaded_mkt is not None:
+    else:
         try:
-            # A. Lectura
-            if uploaded_mkt.name.endswith('.csv'):
-                df_mkt = pd.read_csv(uploaded_mkt)
-            else:
-                df_mkt = pd.read_excel(uploaded_mkt)
+            # A. Lectura desde URL
+            df_mkt = pd.read_csv(url_marketing)
 
             # B. Limpieza
             df_mkt['Fecha_Cierre'] = pd.to_datetime(df_mkt['Fecha_Cierre'], dayfirst=True, errors='coerce')
@@ -978,7 +976,7 @@ elif menu == "7. GESTIÓN DE MARCA":
                  df_final['Nuevas_Reviews'] = df_final['Reviews'].diff().fillna(0)
 
             # ---------------------------------------------------------
-            # 4. DASHBOARD VISUAL (Aquí estaba el error antes)
+            # 4. DASHBOARD VISUAL
             # ---------------------------------------------------------
             if not df_final.empty:
                 # Datos KPIs
@@ -1030,8 +1028,5 @@ elif menu == "7. GESTIÓN DE MARCA":
                 st.info("El archivo procesado está vacío.")
 
         except Exception as e:
-            st.error(f"❌ Error procesando Marca: {e}")
-            st.write("Verifica tus columnas: Fecha_Cierre, Gasto_Ads, Google_Stars, Google_Reviews")
-            
-    else:
-        st.info("👆 Sube tu archivo 'BD_Marketing_Semanal' para comenzar.")
+            st.error(f"❌ Error leyendo URL Marketing: {e}")
+            st.write("Verifica tus columnas y que el enlace sea un CSV público.")
