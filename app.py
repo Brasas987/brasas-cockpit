@@ -507,8 +507,8 @@ elif menu == "4. MARKETING & GROWTH":
         # Usa la conexión nativa de Streamlit para leer en tiempo real sin cache (ttl=0)
         conn = st.connection("gsheets", type=GSheetsConnection)
         
-        ddf_menu_eng = conn.read(
-            spreadsheet="001. Resultados Marketing", # <--- ESTO ES LO QUE FALLA
+        df_menu_eng = conn.read(
+            spreadsheet="https://docs.google.com/spreadsheets/d/TU_URL_LARGA_AQUI/edit", 
             worksheet="OUT_Menu_Engineering",
             ttl=0 
         )
