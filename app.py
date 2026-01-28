@@ -894,147 +894,35 @@ elif menu == "6. GROWTH & LEALTAD":
             st.error(f"❌ Error en Procesamiento Yape: {e}")
 
 # ==============================================================================
-# PESTAÑA 7: GESTIÓN DE MARCA
+# PESTAÑA 7: DIAGNÓSTICO DE MARCA (MODO DEBUG)
 # ==============================================================================
 elif menu == "7. GESTIÓN DE MARCA":
-    st.header("📢 Gestión de Marca (MER)")
-    st.info("Objetivo: Abrir la 'Mandíbula de Cocodrilo'. Gasto estable, Ventas crecientes.")
-
-    # 1. VERIFICACIÓN DE DEPENDENCIAS
-    if 'df_ventas' not in locals() and DATA['ventas'].empty:
-         st.warning("⚠️ No se detectaron Ventas cargadas. Ve a 'Finanzas' primero.")
-         st.stop()
+    st.header("🛠️ Diagnóstico de Conexión (Modo CTO)")
     
-    # 2. CONEXIÓN SEGURA (Usamos el túnel encriptado)
+    # 1. Verificamos qué descargó el robot
     df_mkt = DATA['mkt_semanal']
-
+    
+    st.write("### 1. Estado de la Tabla 'BD_Marketing_Semanal'")
     if df_mkt.empty:
-        st.warning("⚠️ No hay datos de Marketing Semanal cargados.")
+        st.error("❌ LA TABLA ESTÁ VACÍA.")
+        st.info("""
+        Posibles causas:
+        1. La pestaña en el Google Sheet no se llama exactamente 'BD_Marketing_Semanal'.
+        2. El ID del archivo 'MKT_REGISTROS' en secrets.toml no es el correcto.
+        3. El archivo no tiene permisos para el Service Account.
+        """)
     else:
-        try:
-            # --- PROCESAMIENTO ---
-            # El ETL ya limpió 'Gasto_Ads' a numérico. 
-            # Solo aseguramos fechas y ordenamos.
-            
-            # Copia para no alterar el original en caché
-            df_proc = df_mkt.copy()
-            
-            # Asegurar fecha
-            if 'Fecha_Cierre' not in df_proc.columns:
-                 # Intentamos buscar variantes si 'Fecha_Cierre' no existe
-                 cols_fecha = [c for c in df_proc.columns if 'fecha' in c.lower()]
-                 if cols_fecha:
-                     df_proc['Fecha_Cierre'] = df_proc[cols_fecha[0]]
-                 else:
-                     st.error("❌ No se encontró columna de Fecha en Marketing.")
-                     st.stop()
-
-            df_proc['Fecha_Cierre'] = pd.to_datetime(df_proc['Fecha_Cierre'], dayfirst=True, errors='coerce')
-            df_proc = df_proc.dropna(subset=['Fecha_Cierre']).sort_values(by='Fecha_Cierre')
-
-            # Cruzamos con Ventas (Lógica de Atribución Semanal)
-            reporte_final = []
-            
-            # Usamos DATA['ventas'] directamente
-            df_v = DATA['ventas']
-            
-            for index, row in df_proc.iterrows():
-                fecha_fin = row['Fecha_Cierre']
-                # Asumimos semana de Lunes a Domingo (o cierre de campaña)
-                fecha_ini = fecha_fin - pd.Timedelta(days=6)
-                
-                # Filtro de ventas en ese rango de fechas
-                mask_ventas = (df_v['Fecha_dt'] >= fecha_ini) & (df_v['Fecha_dt'] <= fecha_fin)
-                
-                venta_semanal = df_v.loc[mask_ventas, 'Monto'].sum()
-
-                # MER (Marketing Efficiency Ratio)
-                gasto = row.get('Gasto_Ads', 0)
-                mer = venta_semanal / gasto if gasto > 0 else 0
-                
-                fila_procesada = {
-                    'Semana': fecha_fin.strftime("%d-%b"),
-                    'Fecha_Full': fecha_fin,
-                    'Gasto_Ads': gasto,
-                    'Ventas_Reales': venta_semanal,
-                    'MER': mer,
-                    'Reviews': row.get('Google_Reviews', 0),
-                    'Stars': row.get('Google_Stars', 0)
-                }
-                reporte_final.append(fila_procesada)
-                
-            df_final = pd.DataFrame(reporte_final)
-            
-            # Cálculos de Variación
-            if not df_final.empty:
-                 df_final['Nuevas_Reviews'] = df_final['Reviews'].diff().fillna(0)
-
-            # ---------------------------------------------------------
-            # 4. DASHBOARD VISUAL
-            # ---------------------------------------------------------
-            if not df_final.empty:
-                # Datos KPIs (Última semana cerrada)
-                actual = df_final.iloc[-1]
-                anterior = df_final.iloc[-2] if len(df_final) > 1 else actual
-                
-                # --- KPI SECTION ---
-                k1, k2, k3 = st.columns(3)
-                
-                # MER
-                delta_mer = actual['MER'] - anterior['MER']
-                k1.metric(
-                    "MER (Retorno)", 
-                    f"{actual['MER']:.1f}x", 
-                    f"{delta_mer:.1f} vs anterior",
-                    help="Por cada S/1 invertido, cuántos S/ vendiste."
-                )
-                
-                # Gasto
-                k2.metric("Gasto Ads Semanal", f"S/ {actual['Gasto_Ads']:,.0f}", f"Generó: S/ {actual['Ventas_Reales']:,.0f}")
-                
-                # Fama
-                delta_rev = actual['Reviews'] - anterior['Reviews']
-                k3.metric("Google Stars", f"{actual['Stars']} ⭐", f"+{int(delta_rev)} Reviews nuevas")
-                
-                st.markdown("---")
-                
-                # --- GRÁFICO (Mandíbula de Cocodrilo) ---
-                st.subheader("🐊 La Mandíbula de Cocodrilo (Inversión vs Ventas)")
-                
-                fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-                # Barras: Ventas (Lo que queremos que suba)
-                fig.add_trace(
-                    go.Bar(x=df_final['Semana'], y=df_final['Ventas_Reales'], name="Ventas (S/)", marker_color='#00CC96', opacity=0.6),
-                    secondary_y=False
-                )
-
-                # Línea: Gasto (Lo que queremos controlar)
-                fig.add_trace(
-                    go.Scatter(x=df_final['Semana'], y=df_final['Gasto_Ads'], name="Inversión Ads (S/)", mode='lines+markers', line=dict(color='#EF553B', width=3)),
-                    secondary_y=True
-                )
-
-                fig.update_layout(title_text="Correlación Publicitaria", height=450, showlegend=True, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
-                fig.update_yaxes(title_text="Ventas (S/)", secondary_y=False, showgrid=False)
-                fig.update_yaxes(title_text="Gasto Ads (S/)", secondary_y=True, showgrid=False)
-
-                st.plotly_chart(fig, use_container_width=True)
-                
-                # Tabla Detallada
-                with st.expander("🔎 Ver Bitácora Semanal"):
-                    st.dataframe(
-                        df_final.sort_values(by='Fecha_Full', ascending=False), 
-                        column_config={
-                            "Gasto_Ads": st.column_config.NumberColumn("Inversión", format="S/ %.2f"),
-                            "Ventas_Reales": st.column_config.NumberColumn("Ventas", format="S/ %.2f"),
-                            "MER": st.column_config.NumberColumn("MER", format="%.1fx"),
-                        },
-                        use_container_width=True
-                    )
-
-            else:
-                st.info("El archivo procesado está vacío.")
-
-        except Exception as e:
-            st.error(f"❌ Error de Lógica en Marketing: {e}")
+        st.success(f"✅ Conexión Exitosa: Se descargaron {len(df_mkt)} filas.")
+        
+        st.write("### 2. Revisión de Columnas Detectadas")
+        st.write("El robot ve estas columnas en tu Excel:", df_mkt.columns.tolist())
+        
+        st.write("### 3. Vista Previa de Datos (Primeras 5 filas)")
+        st.dataframe(df_mkt.head())
+        
+        st.write("### 4. Prueba de Fecha")
+        if 'Fecha_Cierre' in df_mkt.columns:
+            st.success("✅ Columna 'Fecha_Cierre' encontrada.")
+        else:
+            st.error("❌ NO se encontró la columna 'Fecha_Cierre'.")
+            st.warning("El código necesita esta columna para saber en qué semana colocar el gasto.")
