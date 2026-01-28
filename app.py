@@ -2,11 +2,11 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots  # <--- CORRECCIÓN 2: FALTABA ESTO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import numpy as np
-from streamlit_gsheets import GSheetsConnection
 
 # ==============================================================================
 # 1. CONFIGURACIÓN DEL SISTEMA Y ESTILO (PALANTIR DARK MODE)
@@ -71,6 +71,30 @@ st.markdown("""
 
 # ==============================================================================
 # 2. GESTIÓN DE CREDENCIALES Y CONEXIÓN
+# ==============================================================================
+@st.cache_resource
+def connect_google_sheets():
+    """Conecta con la API de Google usando los Secretos de Streamlit"""
+    scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
+    try:
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        st.error(f"❌ Error Crítico de Autenticación: {e}")
+        st.stop()
+
+# --- CORRECCIÓN 1: CARGA DE IDs DESDE SECRETOS ---
+# Sin esto, load_all_data fallará porque no sabe qué es 'IDS'
+try:
+    IDS = st.secrets["sheets"]
+except Exception as e:
+    st.error("❌ Error Fatal: No se encontraron los IDs de las hojas en secrets.toml. Configura [sheets].")
+    st.stop()
+
+# ==============================================================================
+# 3. MOTOR DE EXTRACCIÓN Y LIMPIEZA DE DATOS (ETL SEGURO)
 # ==============================================================================
 @st.cache_data(ttl=600)
 def load_all_data():
@@ -329,6 +353,7 @@ if menu == "1. CORPORATE OVERVIEW":
                 st.plotly_chart(fig_bcg, use_container_width=True)
             else: st.info("Sin coincidencias ID.")
         else: st.warning("Faltan datos.")
+
 # ==============================================================================
 # PESTAÑA 2: EFICIENCIA & COSTOS
 # ==============================================================================
@@ -488,7 +513,7 @@ elif menu == "3. FINANZAS & RUNWAY":
         else: st.info("🔨 Sin proyectos activos.")
 
 # ==============================================================================
-# PESTAÑA 4: MENU ENGINEERING                      
+# PESTAÑA 4: MENU ENGINEERING                       
 # ==============================================================================
 elif menu == "4. MENU ENGINEERING":
     st.header("🚀 Marketing Science (En Vivo)")
@@ -552,11 +577,10 @@ elif menu == "4. MENU ENGINEERING":
                 }
             )
             
-            
-
         else:
             st.error(f"❌ Error de Estructura: Faltan columnas en el reporte. Se requiere: {required_cols}")
             st.write("Columnas detectadas:", df_menu_eng.columns.tolist())
+
 # ==============================================================================
 # PESTAÑA 5: CX & TIEMPOS
 # ==============================================================================
