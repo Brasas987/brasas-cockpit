@@ -133,6 +133,7 @@ def load_all_data():
     DB['cx_tiempos'] = safe_read("MKT_RESULTADOS", "BD_CX_Tiempos") 
     DB['yape'] = safe_read("MKT_RESULTADOS", "Data_Clientes_Yape")
     DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal")
+    DB['diaria'] = safe_read("REGISTROS", "Data_Diaria")
 
     # --- LIMPIEZA DE FECHAS (GLOBAL) ---
     for key in DB:
@@ -208,7 +209,7 @@ with st.sidebar:
     
     # --- MENÚ DE NAVEGACIÓN ---
     menu = st.radio("MENÚ ESTRATÉGICO", 
-        ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MENU ENGINEERING", "5. CX & TIEMPOS", "6. GROWTH & LEALTAD", "7. GESTION DE MARCA"])
+        ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MENU ENGINEERING", "5. CX & TIEMPOS", "6. GROWTH & LEALTAD", "7. GESTION DE MARCA", "8. MODELO ECONOMÉTRICO"])
     
     st.markdown("---")
     
@@ -1011,3 +1012,110 @@ elif menu == "7. GESTION DE MARCA":
             
         except Exception as e:
             st.error(f"❌ Error en el procesamiento lógico: {e}")
+
+# ==============================================================================
+# PESTAÑA 8: MODELO ECONOMÉTRICO (EL ORÁCULO)
+# ==============================================================================
+elif menu == "8. MODELO ECONOMÉTRICO":
+    st.header("🧠 Intelligence Hub: Causa & Efecto")
+    st.info("Este módulo analiza qué variables mueven realmente la aguja de tus ventas.")
+
+    # 1. Generar la Tabla Maestra (Usando TODA la historia)
+    df_master = build_econometric_master(DATA)
+
+    if df_master.empty:
+        st.warning("⚠️ No hay suficientes datos para generar el modelo econométrico.")
+    else:
+        # 2. Aplicar Filtro de Tiempo (SOLO PARA VISUALIZACIÓN)
+        mask_time = (df_master['Fecha_dt'].dt.date >= start_date.date()) & (df_master['Fecha_dt'].dt.date <= hoy.date())
+        df_plot = df_master[mask_time].copy()
+
+        if df_plot.empty:
+            st.warning(f"No hay datos en el periodo seleccionado ({periodo_label}).")
+        else:
+            # --- SECCIÓN A: DINÁMICA DE PRECIOS (ELASTICIDAD) ---
+            st.subheader("1. La Ley de la Demanda (Precio vs Ventas)")
+            
+            fig_price = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            # Barras: Cantidad Vendida (Q)
+            fig_price.add_trace(
+                go.Bar(x=df_plot['Fecha_dt'], y=df_plot['Cantidad'], name="Platos Vendidos (Q)", marker_color='#00A3E0', opacity=0.7),
+                secondary_y=False
+            )
+            # Línea: Precio Real (P)
+            fig_price.add_trace(
+                go.Scatter(x=df_plot['Fecha_dt'], y=df_plot['Precio_Promedio_Real'], name="Precio Efectivo (S/)", 
+                           mode='lines+markers', line=dict(color='#FF4B4B', width=3, dash='dot')),
+                secondary_y=True
+            )
+
+            fig_price.update_layout(template="plotly_dark", height=450, title_text="¿Los descuentos realmente aumentan el volumen?", paper_bgcolor='rgba(0,0,0,0)')
+            fig_price.update_yaxes(title_text="Cantidad (Unidades)", secondary_y=False)
+            fig_price.update_yaxes(title_text="Precio Promedio (S/)", secondary_y=True)
+            st.plotly_chart(fig_price, use_container_width=True)
+
+            # --- SECCIÓN B: ROI DE MARKETING ---
+            st.subheader("2. Impacto Publicitario (Ads vs Tráfico)")
+            
+            fig_ads = make_subplots(specs=[[{"secondary_y": True}]])
+            
+            # Área: Ventas Totales
+            fig_ads.add_trace(
+                go.Scatter(x=df_plot['Fecha_dt'], y=df_plot['Monto'], name="Venta Total (S/)", 
+                           fill='tozeroy', mode='none', fillcolor='rgba(0, 204, 150, 0.2)'),
+                secondary_y=False
+            )
+            # Barras: Gasto Ads
+            fig_ads.add_trace(
+                go.Bar(x=df_plot['Fecha_dt'], y=df_plot['Gasto_Ads_Soles'], name="Inversión Ads (S/)", marker_color='#FFA500'),
+                secondary_y=True
+            )
+
+            fig_ads.update_layout(template="plotly_dark", height=400, title_text="Relación Inversión vs Retorno", paper_bgcolor='rgba(0,0,0,0)')
+            fig_ads.update_yaxes(title_text="Venta Caja (S/)", secondary_y=False)
+            fig_ads.update_yaxes(title_text="Gasto Diario (S/)", secondary_y=True)
+            st.plotly_chart(fig_ads, use_container_width=True)
+
+            # --- SECCIÓN C: FACTORES EXTERNOS (SHOCKS) ---
+            st.subheader("3. El Entorno (Clima, Competencia, Stockouts)")
+            
+            # Crear gráfico base de ventas
+            fig_env = px.line(df_plot, x='Fecha_dt', y='Cantidad', title="Impacto de Variables Externas")
+            fig_env.update_traces(line_color='gray', opacity=0.5)
+
+            # Agregar marcadores para eventos específicos (Si existen las columnas)
+            
+            # 1. Lluvia
+            if 'Lluvia_Intensa' in df_plot.columns and df_plot['Lluvia_Intensa'].sum() > 0:
+                df_rain = df_plot[df_plot['Lluvia_Intensa'] == 1]
+                fig_env.add_trace(go.Scatter(
+                    x=df_rain['Fecha_dt'], y=df_rain['Cantidad'],
+                    mode='markers', name='Lluvia Intensa 🌧️',
+                    marker=dict(color='blue', size=12, symbol='triangle-down')
+                ))
+
+            # 2. Competencia
+            if 'Competencia_Agresiva' in df_plot.columns and df_plot['Competencia_Agresiva'].sum() > 0:
+                df_comp = df_plot[df_plot['Competencia_Agresiva'] == 1]
+                fig_env.add_trace(go.Scatter(
+                    x=df_comp['Fecha_dt'], y=df_comp['Cantidad'],
+                    mode='markers', name='Ataque Competencia ⚔️',
+                    marker=dict(color='red', size=12, symbol='x')
+                ))
+
+            # 3. Stockouts (¡Importante!)
+            if 'Stockout_Cierre' in df_plot.columns and df_plot['Stockout_Cierre'].sum() > 0:
+                df_stock = df_plot[df_plot['Stockout_Cierre'] == 1]
+                fig_env.add_trace(go.Scatter(
+                    x=df_stock['Fecha_dt'], y=df_stock['Cantidad'],
+                    mode='markers', name='Quiebre de Stock 🚫',
+                    marker=dict(color='orange', size=12, symbol='circle-x')
+                ))
+
+            fig_env.update_layout(template="plotly_dark", height=450, paper_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig_env, use_container_width=True)
+            
+            # --- TABLA DE DATOS MAESTRA ---
+            with st.expander("🔎 Ver Data Maestra (Auditable)"):
+                st.dataframe(df_plot, use_container_width=True)
