@@ -205,12 +205,8 @@ with st.sidebar:
     st.title("🔥 BRASAS CAPITALES")
     st.caption(f"CEO Dashboard | {hoy.strftime('%d-%b-%Y')}")
     st.markdown("---")
-
-    # --- 2. FECHA Y CONTEXTO ---
-    st.caption(f"CEO Dashboard | {hoy.strftime('%d-%b-%Y')}")
-    st.markdown("---")
     
-    # --- 3. MENÚ DE NAVEGACIÓN ---
+    # --- MENÚ DE NAVEGACIÓN ---
     menu = st.radio("MENÚ ESTRATÉGICO", 
         ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MENU ENGINEERING", "5. CX & TIEMPOS", "6. GROWTH & LEALTAD", "7. GESTION DE MARCA"])
     
