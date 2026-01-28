@@ -202,11 +202,20 @@ except Exception as e:
 hoy = datetime.now() - timedelta(hours=5)
 
 with st.sidebar:
-    st.title("🔥 BRASAS CAPITALES")
+    # --- 1. LOGO CORPORATIVO ---
+    # Intentamos cargar la imagen. Si falla, mostramos texto de respaldo.
+    try:
+        # width=200 ajusta el tamaño. Cámbialo si tu logo es muy grande o chico.
+        st.image("logo.png", use_container_width=True) 
+    except:
+        st.warning("⚠️ Falta subir 'logo.png' a GitHub")
+        st.title("🔥 BRASAS CAPITALES")
+
+    # --- 2. FECHA Y CONTEXTO ---
     st.caption(f"CEO Dashboard | {hoy.strftime('%d-%b-%Y')}")
     st.markdown("---")
     
-    # Menú de Navegación
+    # --- 3. MENÚ DE NAVEGACIÓN ---
     menu = st.radio("MENÚ ESTRATÉGICO", 
         ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MENU ENGINEERING", "5. CX & TIEMPOS", "6. GROWTH & LEALTAD", "7. GESTION DE MARCA"])
     
