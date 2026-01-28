@@ -105,15 +105,10 @@ def load_all_data():
     DB['forecast'] = safe_read("FORECAST", "OUT_Pronostico_Ventas")
     DB['soberania'] = safe_read("FORECAST", "OUT_Soberania_Financiera") 
     DB['deuda'] = safe_read("LIBROS", "Libro_Cuentas_Pagar")
-
-    # --- CARGA DE DATOS NUEVOS (MKT & CX) - YA NO USAMOS CSV PÚBLICOS ---
-    # Nota: He direccionado a "MKT_RESULTADOS" para los Outputs procesados. 
-    # Si prefieres la data cruda, cambia "MKT_RESULTADOS" por "MKT_REGISTROS".
-    
     DB['menu_eng'] = safe_read("MKT_RESULTADOS", "OUT_Menu_Engineering")
     DB['cx_tiempos'] = safe_read("MKT_RESULTADOS", "BD_CX_Tiempos") 
     DB['yape'] = safe_read("MKT_RESULTADOS", "Data_Clientes_Yape")
-    DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal") # Este suele estar en Registros
+    DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal")
 
     # --- LIMPIEZA DE FECHAS (GLOBAL) ---
     for key in DB:
@@ -497,56 +492,71 @@ elif menu == "3. FINANZAS & RUNWAY":
 # ==============================================================================
 elif menu == "4. MENU ENGINEERING":
     st.header("🚀 Marketing Science (En Vivo)")
+    
+    # 1. CONEXIÓN SEGURA (Usamos la memoria caché, no el enlace público)
+    # DATA['menu_eng'] ya fue cargado y limpiado en el Bloque 3
+    df_menu_eng = DATA['menu_eng']
 
-    try:
-        # --- MÉTODO "BYPASS": CONEXIÓN DIRECTA CSV ---
-        # Pega aquí el enlace que copiaste de "Publicar en la web"
-        url_csv = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIJmWfryiBKTZYd3_mkOCr3Nm4AEMSMu2gD77ro_R9bnyMpL_7c-iRsogkMuCBXQ_ImIE8u1Nja2PN/pub?gid=0&single=true&output=csv"
-        
-        # Leemos directo con Pandas (Sin pedir permiso al robot)
-        df_menu_eng = pd.read_csv(url_csv)
-        
-        # --- PROCESAMIENTO ---
-        if df_menu_eng.empty:
-            st.warning("⚠️ La hoja está vacía.")
-            st.stop()
-            
-        # Limpieza de datos
-        cols_num = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num', 'Foto_Calidad']
-        for col in cols_num:
-            if col in df_menu_eng.columns:
-                df_menu_eng[col] = pd.to_numeric(df_menu_eng[col], errors='coerce').fillna(0)
-
-        # --- GRÁFICOS (Igual que antes) ---
+    # 2. VALIDACIÓN DE DATOS
+    if df_menu_eng.empty:
+        st.warning("⚠️ No hay datos de Ingeniería de Menú. Revisa la carga en 'MKT_RESULTADOS'.")
+        # No usamos st.stop() para permitir que el usuario vea el resto de la app si quiere
+    
+    else:
+        # --- GRÁFICOS ---
         st.subheader("🎯 Matriz de Ingeniería de Menú")
         
-        fig_matrix = px.scatter(
-            df_menu_eng,
-            x="Mix_Percent",
-            y="Margen",
-            color="Clasificacion",
-            size="Total_Venta", 
-            hover_name="Menu",
-            color_discrete_map={
-                "⭐ ESTRELLA": "#00FF00", "🐎 CABALLO BATALLA": "#FFFF00", 
-                "🧩 PUZZLE": "#00FFFF", "🐶 PERRO": "#FF0000"   
-            },
-            title="Mapa de Rentabilidad vs Popularidad"
-        )
-        
-        avg_mix = df_menu_eng['Mix_Percent'].mean()
-        avg_margen = df_menu_eng['Margen'].mean()
-        fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
-        fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
-        
-        fig_matrix.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', height=550)
-        st.plotly_chart(fig_matrix, use_container_width=True)
+        # Validación de columnas críticas antes de graficar
+        required_cols = ['Mix_Percent', 'Margen', 'Clasificacion', 'Total_Venta', 'Menu', 'Precio_num']
+        if all(col in df_menu_eng.columns for col in required_cols):
+            
+            fig_matrix = px.scatter(
+                df_menu_eng,
+                x="Mix_Percent",
+                y="Margen",
+                color="Clasificacion",
+                size="Total_Venta", 
+                hover_name="Menu",
+                color_discrete_map={
+                    "⭐ ESTRELLA": "#00FF00", "🐎 CABALLO BATALLA": "#FFFF00", 
+                    "🧩 PUZZLE": "#00FFFF", "🐶 PERRO": "#FF0000"    
+                },
+                title="Mapa de Rentabilidad vs Popularidad"
+            )
+            
+            # Líneas de corte dinámicas (Promedios)
+            avg_mix = df_menu_eng['Mix_Percent'].mean()
+            avg_margen = df_menu_eng['Margen'].mean()
+            
+            fig_matrix.add_hline(y=avg_margen, line_dash="dot", line_color="white", annotation_text="Margen Promedio")
+            fig_matrix.add_vline(x=avg_mix, line_dash="dot", line_color="white", annotation_text="Popularidad Promedio")
+            
+            fig_matrix.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', height=550)
+            st.plotly_chart(fig_matrix, use_container_width=True)
 
-        st.markdown("### ⚡ Plan de Acción")
-        st.dataframe(df_menu_eng[['Menu', 'Clasificacion', 'Accion_Sugerida', 'Precio_num']], use_container_width=True, hide_index=True)
+            # --- TABLA DE ACCIÓN ---
+            st.markdown("### ⚡ Plan de Acción")
+            # Mostramos columnas tácticas
+            cols_show = ['Menu', 'Clasificacion', 'Accion_Sugerida', 'Precio_num', 'Margen', 'Mix_Percent']
+            # Filtramos solo las columnas que existen
+            cols_final = [c for c in cols_show if c in df_menu_eng.columns]
+            
+            st.dataframe(
+                df_menu_eng[cols_final].sort_values('Margen', ascending=False), 
+                use_container_width=True, 
+                hide_index=True,
+                column_config={
+                    "Precio_num": st.column_config.NumberColumn("Precio", format="S/ %.2f"),
+                    "Margen": st.column_config.NumberColumn("Margen Unit.", format="S/ %.2f"),
+                    "Mix_Percent": st.column_config.NumberColumn("Mix %", format="%.2f %%")
+                }
+            )
+            
+            
 
-    except Exception as e:
-        st.error(f"❌ Error leyendo CSV: {e}")
+        else:
+            st.error(f"❌ Error de Estructura: Faltan columnas en el reporte. Se requiere: {required_cols}")
+            st.write("Columnas detectadas:", df_menu_eng.columns.tolist())
 # ==============================================================================
 # PESTAÑA 5: CX & TIEMPOS
 # ==============================================================================
@@ -554,126 +564,132 @@ elif menu == "5. CX & TIEMPOS":
     st.header("⏱️ Speed of Service (SOS) & Calidad")
     st.info("Objetivo: Entregar en menos de 15 minutos. (Muestreo Aleatorio)")
 
-    # 1. ENLACE CONVERTIDO A CSV (El truco automático)
-    # Tu enlace original era HTML, aquí lo forzamos a CSV
-    url_cx = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIJmWfryiBKTZYd3_mkOCr3Nm4AEMSMu2gD77ro_R9bnyMpL_7c-iRsogkMuCBXQ_ImIE8u1Nja2PN/pub?gid=1382289241&single=true&output=csv"
+    # 1. CONEXIÓN SEGURA (Adiós pd.read_csv)
+    # Usamos la data ya cargada por el robot seguro
+    df_cx = DATA['cx_tiempos']
 
-    try:
-        # Cargar datos
-        df_cx = pd.read_csv(url_cx)
-
-        # Validación de Seguridad: Si está vacío
-        if df_cx.empty:
-            st.warning("⚠️ La base de datos de CX está vacía. Registra algunos tickets primero.")
-            st.stop()
-
-        # 2. PROCESAMIENTO DE TIEMPOS (La Matemática)
-        # Convertimos las columnas de texto a Objetos de Tiempo reales
-        # Asumimos formato dd/mm/yyyy para la fecha
-        df_cx['Fecha_dt'] = pd.to_datetime(df_cx['Fecha'], dayfirst=True, errors='coerce')
-        
-        # Función auxiliar para combinar Fecha + Hora y crear un Timestamp completo
-        def combinar_fecha_hora(row, col_hora):
-            try:
-                # Une "26/01/2026" con "13:00" y lo convierte a fecha-hora
-                return pd.to_datetime(f"{row['Fecha']} {row[col_hora]}", dayfirst=True)
-            except:
-                return pd.NaT
-
-        df_cx['Inicio_Real'] = df_cx.apply(lambda x: combinar_fecha_hora(x, 'Hora_Pedido'), axis=1)
-        df_cx['Fin_Real'] = df_cx.apply(lambda x: combinar_fecha_hora(x, 'Hora_Entrega'), axis=1)
-
-        # Cálculo de Minutos (La Resta)
-        df_cx['Minutos_Espera'] = (df_cx['Fin_Real'] - df_cx['Inicio_Real']).dt.total_seconds() / 60
-
-        # Eliminar errores (filas donde no se pudo calcular)
-        df_cx = df_cx.dropna(subset=['Minutos_Espera'])
-
-        # 3. SEMÁFORO DE VELOCIDAD (KPIs)
-        # Definimos tus estándares: <15 min (Rápido), 15-25 (Normal), >25 (Lento)
-        def clasificar_velocidad(minutos):
-            if minutos <= 15: return "🟢 RÁPIDO"
-            elif minutos <= 25: return "🟡 NORMAL"
-            else: return "🔴 LENTO"
-
-        df_cx['Status'] = df_cx['Minutos_Espera'].apply(clasificar_velocidad)
-
-        # --- DASHBOARD VISUAL ---
-
-        # FILA 1: KPIs MACRO
-        promedio_min = df_cx['Minutos_Espera'].mean()
-        pct_lentos = (len(df_cx[df_cx['Status'] == "🔴 LENTO"]) / len(df_cx)) * 100
-        total_muestras = len(df_cx)
-
-        kpi1, kpi2, kpi3 = st.columns(3)
-        
-        kpi1.metric(
-            "Tiempo Promedio", 
-            f"{promedio_min:.1f} min", 
-            delta="-2 min vs Objetivo" if promedio_min < 17 else f"+{promedio_min-15:.1f} min demora",
-            delta_color="inverse" # Si es bajo es verde (bueno)
-        )
-        
-        kpi2.metric(
-            "% Pedidos Lentos (>25m)", 
-            f"{pct_lentos:.1f}%",
-            "Meta: < 5%",
-            delta_color="inverse"
-        )
-        
-        kpi3.metric("Muestras Auditadas", f"{total_muestras} Tickets")
-
-        st.markdown("---")
-
-        # FILA 2: GRÁFICOS
-        col_graf1, col_graf2 = st.columns(2)
-
-        with col_graf1:
-            st.subheader("📊 Distribución de Tiempos")
-            # Histograma: ¿Dónde se concentra la mayoría de tus pedidos?
-            fig_hist = px.histogram(
-                df_cx, 
-                x="Minutos_Espera", 
-                nbins=10, 
-                color="Status",
-                color_discrete_map={"🟢 RÁPIDO": "green", "🟡 NORMAL": "yellow", "🔴 LENTO": "red"},
-                title="Curva de Velocidad en Cocina"
-            )
-            # Línea de meta (15 min)
-            fig_hist.add_vline(x=15, line_dash="dot", line_color="white", annotation_text="Meta (15m)")
-            st.plotly_chart(fig_hist, use_container_width=True)
-
-        with col_graf2:
-            st.subheader("🚨 Incidencias Reportadas")
-            # Contar incidencias que NO sean "Ninguna" o "Todo OK"
-            df_incidencias = df_cx[~df_cx['Incidencia'].isin(['Ninguna', 'Todo OK', 'OK', '-'])]
+    # 2. VALIDACIÓN DE ESTRUCTURA
+    if df_cx.empty:
+        st.warning("⚠️ La base de datos de CX está vacía o no se pudo cargar.")
+        # No usamos stop() para no bloquear la app completa
+    else:
+        try:
+            # --- PROCESAMIENTO DE TIEMPOS (Lógica de Negocio) ---
             
-            if not df_incidencias.empty:
-                # Gráfico de Pastel de problemas
-                fig_pie = px.pie(
-                    df_incidencias, 
-                    names='Incidencia', 
-                    title='Causas de Quejas / Demoras',
-                    hole=0.4
+            # Verificamos que existan las columnas críticas antes de calcular
+            required_cols = ['Fecha', 'Hora_Pedido', 'Hora_Entrega', 'Incidencia', 'ID_Ticket']
+            if not all(col in df_cx.columns for col in required_cols):
+                st.error(f"❌ Faltan columnas en tu Excel. Necesitas: {required_cols}")
+                st.stop()
+
+            # Función auxiliar para combinar Fecha + Hora
+            # Nota: Usamos la columna original 'Fecha' (string) porque 'Fecha_dt' ya tiene una hora (00:00)
+            def combinar_fecha_hora(row, col_hora):
+                try:
+                    fecha_str = str(row['Fecha']).split(' ')[0] # Aseguramos solo la fecha
+                    hora_str = str(row[col_hora]).strip()
+                    full_str = f"{fecha_str} {hora_str}"
+                    return pd.to_datetime(full_str, dayfirst=True)
+                except:
+                    return pd.NaT
+
+            df_cx['Inicio_Real'] = df_cx.apply(lambda x: combinar_fecha_hora(x, 'Hora_Pedido'), axis=1)
+            df_cx['Fin_Real'] = df_cx.apply(lambda x: combinar_fecha_hora(x, 'Hora_Entrega'), axis=1)
+
+            # Cálculo de Minutos (La Resta)
+            df_cx['Minutos_Espera'] = (df_cx['Fin_Real'] - df_cx['Inicio_Real']).dt.total_seconds() / 60
+
+            # Limpieza de nulos (Errores de tipeo en horas)
+            df_validos = df_cx.dropna(subset=['Minutos_Espera']).copy()
+            
+            if df_validos.empty:
+                st.warning("⚠️ Hay datos, pero las horas no tienen el formato correcto (ej: '13:30').")
+                st.stop()
+
+            # 3. SEMÁFORO DE VELOCIDAD (KPIs)
+            def clasificar_velocidad(minutos):
+                if minutos <= 5: return "🟢 RÁPIDO"
+                elif minutos <= 10: return "🟡 NORMAL"
+                else: return "🔴 LENTO"
+
+            df_validos['Status'] = df_validos['Minutos_Espera'].apply(clasificar_velocidad)
+
+            # --- DASHBOARD VISUAL ---
+
+            # FILA 1: KPIs MACRO
+            promedio_min = df_validos['Minutos_Espera'].mean()
+            pct_lentos = (len(df_validos[df_validos['Status'] == "🔴 LENTO"]) / len(df_validos)) * 100
+            total_muestras = len(df_validos)
+
+            kpi1, kpi2, kpi3 = st.columns(3)
+            
+            kpi1.metric(
+                "Tiempo Promedio", 
+                f"{promedio_min:.1f} min", 
+                delta="-2 min vs Objetivo" if promedio_min < 17 else f"+{promedio_min-15:.1f} min demora",
+                delta_color="inverse"
+            )
+            
+            kpi2.metric(
+                "% Pedidos Lentos (>25m)", 
+                f"{pct_lentos:.1f}%",
+                "Meta: < 5%",
+                delta_color="inverse"
+            )
+            
+            kpi3.metric("Muestras Auditadas", f"{total_muestras} Tickets")
+
+            st.markdown("---")
+
+            # FILA 2: GRÁFICOS
+            col_graf1, col_graf2 = st.columns(2)
+
+            with col_graf1:
+                st.subheader("📊 Distribución de Tiempos")
+                fig_hist = px.histogram(
+                    df_validos, 
+                    x="Minutos_Espera", 
+                    nbins=15, 
+                    color="Status",
+                    color_discrete_map={"🟢 RÁPIDO": "green", "🟡 NORMAL": "yellow", "🔴 LENTO": "red"},
+                    title="Curva de Velocidad en Cocina"
                 )
-                st.plotly_chart(fig_pie, use_container_width=True)
-            else:
-                st.success("🎉 ¡Increíble! No hay incidencias negativas registradas en la muestra.")
+                fig_hist.add_vline(x=15, line_dash="dot", line_color="white", annotation_text="Meta (15m)")
+                st.plotly_chart(fig_hist, use_container_width=True)
 
-        # FILA 3: TABLA DETALLADA (Para ver quién falló)
-        st.subheader("🕵️ Auditoría de Tickets (Últimos 10)")
-        st.dataframe(
-            df_cx[['ID_Ticket', 'Fecha', 'Hora_Pedido', 'Hora_Entrega', 'Minutos_Espera', 'Status', 'Incidencia']]
-            .sort_values(by='Fecha_dt', ascending=False)
-            .head(10),
-            use_container_width=True,
-            hide_index=True
-        )
+            with col_graf2:
+                st.subheader("🚨 Incidencias Reportadas")
+                # Filtramos incidencias reales
+                df_incidencias = df_validos[~df_validos['Incidencia'].isin(['Ninguna', 'Todo OK', 'OK', '-', 'ok', 'nan'])]
+                
+                if not df_incidencias.empty:
+                    fig_pie = px.pie(
+                        df_incidencias, 
+                        names='Incidencia', 
+                        title='Causas de Quejas / Demoras',
+                        hole=0.4
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                else:
+                    st.success("🎉 ¡Increíble! No hay incidencias negativas registradas en la muestra.")
 
-    except Exception as e:
-        st.error("❌ Error procesando datos de CX.")
-        st.write(f"Detalle técnico: {e}")
-        st.info("Consejo: Revisa que en el Excel las horas estén formato '13:00' (24h) y las fechas 'dd/mm/yyyy'.")
+            # FILA 3: TABLA DETALLADA
+            st.subheader("🕵️ Auditoría de Tickets (Últimos 10)")
+            # Aseguramos que Fecha_dt exista para ordenar
+            if 'Fecha_dt' not in df_validos.columns:
+                 df_validos['Fecha_dt'] = pd.to_datetime(df_validos['Fecha'], dayfirst=True, errors='coerce')
+
+            st.dataframe(
+                df_validos[['ID_Ticket', 'Fecha', 'Hora_Pedido', 'Hora_Entrega', 'Minutos_Espera', 'Status', 'Incidencia']]
+                .sort_values(by='Fecha_dt', ascending=False)
+                .head(10),
+                use_container_width=True,
+                hide_index=True
+            )
+
+        except Exception as e:
+            st.error("❌ Error de lógica en CX.")
+            st.write(f"Detalle: {e}")
 
 # ==============================================================================
 # PESTAÑA 6: GROWTH & LEALTAD
@@ -682,231 +698,176 @@ elif menu == "6. GROWTH & LEALTAD":
     st.header("💎 CRM & Lealtad (Yape Mining)")
     st.info("Estrategia: Análisis financiero de flujos digitales (Yape/Plin).")
 
-    # ---------------------------------------------------------
-    # 1. CONFIGURACIÓN Y CONEXIÓN
-    # ---------------------------------------------------------
-    # 👇 PEGA AQUÍ EL ENLACE CSV DE TU PESTAÑA 'Data_Clientes_Yape'
-    url_yape = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRIJmWfryiBKTZYd3_mkOCr3Nm4AEMSMu2gD77ro_R9bnyMpL_7c-iRsogkMuCBXQ_ImIE8u1Nja2PN/pubhtml?gid=1959458691&single=true" 
+    # 1. CONEXIÓN SEGURA (Usamos el túnel encriptado)
+    df_yape = DATA['yape']
+
+    # 2. CÁLCULO DE VARA DE MEDIR (Ticket Promedio)
+    # Usamos DATA['ventas'] porque es la fuente oficial
+    ticket_promedio_global = 20.0 # Valor default
     
-    # Intentamos calcular el Ticket Promedio Global usando tu data de Ventas (si existe)
-    # Esto define la "Vara de Medir" para saber quién es VIP
-    try:
-        # Buscamos df_ventas en el entorno (debe cargarse al inicio de la app)
-        if 'df_ventas' in locals() and not df_ventas.empty and 'ID_Ticket' in df_ventas.columns:
+    if not DATA['ventas'].empty:
+        try:
             # Agrupamos por Ticket para obtener el valor real por mesa
-            df_tickets_ref = df_ventas.groupby('ID_Ticket')['Monto'].sum()
-            ticket_promedio_global = df_tickets_ref.mean()
-        else:
-            ticket_promedio_global = 20.0 # Valor por defecto de seguridad
-    except:
-        ticket_promedio_global = 20.0
+            # Nota: Asumimos que la columna ID_Ticket existe. Si no, usa el promedio simple.
+            if 'ID_Ticket' in DATA['ventas'].columns:
+                df_tickets_ref = DATA['ventas'].groupby('ID_Ticket')['Monto'].sum()
+                ticket_promedio_global = df_tickets_ref.mean()
+            else:
+                ticket_promedio_global = DATA['ventas']['Monto'].mean()
+        except:
+            pass # Si falla, se queda en 20.0
 
     c_kpi1, c_kpi2 = st.columns(2)
     c_kpi1.metric("Ticket Promedio Global (Base)", f"S/ {ticket_promedio_global:.2f}", help="Se usa para definir los umbrales VIP")
 
-    # ---------------------------------------------------------
-    # 2. CARGA Y LIMPIEZA DE DATOS (MODO MANUAL)
-    # ---------------------------------------------------------
-    try:
-        df_yape = pd.read_csv(url_yape)
-        
-        # Copia de seguridad
-        df_ingresos = df_yape.copy()
-
-        # Estandarización de nombres de columnas (Por si en Sheets usas espacios o guiones bajos)
-        # El código busca las versiones con guión bajo, si no las halla, intenta renombrar
-        mapa_cols = {
-            'Fecha de operación': 'Fecha_Operacion',
-            'Fecha de Operación': 'Fecha_Operacion',
-            'fecha': 'Fecha_Operacion',
-            'monto': 'Monto',
-            'origen': 'Origen'
-        }
-        df_ingresos.rename(columns=mapa_cols, inplace=True)
-
-        # Validación de Seguridad
-        cols_requeridas = ['Origen', 'Monto', 'Fecha_Operacion']
-        if not all(col in df_ingresos.columns for col in cols_requeridas):
-            st.error(f"❌ Error de Formato: Faltan columnas. Tu archivo debe tener: {cols_requeridas}")
-            st.write("Columnas detectadas:", df_ingresos.columns.tolist())
-            st.stop()
-
-        # Conversión de Tipos
-        # "coerce" transformará errores en NaT (Not a Time) para no romper el código
-        df_ingresos['Fecha_dt'] = pd.to_datetime(df_ingresos['Fecha_Operacion'], dayfirst=True, errors='coerce')
-        
-        # Eliminar filas con fechas inválidas (basura)
-        df_ingresos = df_ingresos.dropna(subset=['Fecha_dt'])
-        
-        # Crear columna Mes-Año para la tabla visual (Ej: 2026-01)
-        df_ingresos['Mes_Año'] = df_ingresos['Fecha_dt'].dt.strftime('%Y-%m') 
-
-        # Limpieza de Nombres de Clientes
-        def limpiar_nombre(nombre):
-            if not isinstance(nombre, str): return "Desconocido"
-            nombre = nombre.upper().strip()
-            # Lista negra de prefijos bancarios
-            prefijos = ["PLIN - ", "YAPE - ", "TRANSFERENCIA - ", "IZIPAY - ", "INTERBANK - ", "BCP - "]
-            for p in prefijos:
-                nombre = nombre.replace(p, "")
-            return nombre
-
-        df_ingresos['Cliente_Limpio'] = df_ingresos['Origen'].apply(limpiar_nombre)
-
-        # ---------------------------------------------------------
-        # 3. LÓGICA DE NEGOCIO: SEGMENTACIÓN
-        # ---------------------------------------------------------
-        fecha_hoy = pd.to_datetime("today")
-        
-        # Agrupamos por Cliente (Histórico Total)
-        df_clientes = df_ingresos.groupby('Cliente_Limpio').agg(
-            Total_Historico=('Monto', 'sum'),
-            Visitas_Totales=('Fecha_dt', 'count'),
-            Ultima_Visita=('Fecha_dt', 'max'),
-            Ticket_Maximo=('Monto', 'max') # Clave para detectar Ballenas de 1 noche
-        ).reset_index()
-
-        df_clientes['Dias_Ausente'] = (fecha_hoy - df_clientes['Ultima_Visita']).dt.days
-
-        # Definición de Umbrales Dinámicos
-        umbral_vip = ticket_promedio_global * 4        # 4x (Ej: S/ 80)
-        umbral_recurrente = ticket_promedio_global * 1.5 # 1.5x (Ej: S/ 30)
-
-        def segmentar_cliente(row):
-            total = row['Total_Historico']
-            visitas = row['Visitas_Totales']
-            dias_off = row['Dias_Ausente']
-            tk_max = row['Ticket_Maximo']
+    # 3. PROCESAMIENTO DE CLIENTES
+    if df_yape.empty:
+        st.warning("⚠️ No hay datos de Yape cargados.")
+    else:
+        try:
+            df_ingresos = df_yape.copy()
             
-            estado = ""
+            # --- LIMPIEZA (ETL ya hizo parte del trabajo, aquí refinamos) ---
+            # El ETL ya renombró a 'Fecha_Operacion', 'Monto', 'Origen' y creó 'Fecha_dt'
+            # Verificamos si falta algo crítico
             
-            # --- CLASIFICACIÓN FINANCIERA ---
-            # 1. BALLENA (Gastó mucho en 1 sola visita)
-            if tk_max >= umbral_vip and visitas == 1:
-                estado = "🐋 BALLENA (1 Visita)"
-            
-            # 2. VIP SOCIO (Gastó mucho acumulado y vino varias veces)
-            elif total >= umbral_vip:
-                estado = "💎 VIP (Socio)"
-            
-            # 3. RECURRENTE (Gasto medio)
-            elif total >= umbral_recurrente:
-                estado = "🔥 RECURRENTE"
-            
-            # 4. CASUAL (Gasto bajo)
-            else:
-                estado = "🌱 CASUAL"
-            
-            # --- ESTADO DE RETENCIÓN (CHURN) ---
-            if dias_off > 30:
-                if "CASUAL" in estado:
-                    estado = "💤 PERDIDO"
-                else:
-                    # Mantiene su rango anterior pero con etiqueta de Dormido
-                    estado = f"💤 DORMIDO ({estado.split('(')[0].strip()})" 
-            
-            return estado
+            if 'Fecha_dt' not in df_ingresos.columns:
+                 # Fallback por si el ETL no procesó fechas
+                 df_ingresos['Fecha_dt'] = pd.to_datetime(df_ingresos['Fecha_Operacion'], dayfirst=True, errors='coerce')
 
-        df_clientes['Segmento'] = df_clientes.apply(segmentar_cliente, axis=1)
+            # Eliminamos filas sin fecha
+            df_ingresos = df_ingresos.dropna(subset=['Fecha_dt'])
+            
+            # Columna Mes-Año para Cohortes
+            df_ingresos['Mes_Año'] = df_ingresos['Fecha_dt'].dt.strftime('%Y-%m') 
 
-        # KPI de Cartera
-        total_vip = len(df_clientes[df_clientes['Segmento'].str.contains("VIP")])
-        c_kpi2.metric("Socios VIP Activos", total_vip, "Clientes fidelizados de alto valor")
+            # Limpieza de Nombres (Quitamos "YAPE - ", "PLIN - ")
+            def limpiar_nombre(nombre):
+                if not isinstance(nombre, str): return "DESCONOCIDO"
+                nombre = nombre.upper().strip()
+                prefijos = ["PLIN - ", "YAPE - ", "TRANSFERENCIA - ", "IZIPAY - ", "INTERBANK - ", "BCP - ", "PLIN", "YAPE"]
+                for p in prefijos:
+                    nombre = nombre.replace(p, "").strip()
+                return nombre if len(nombre) > 2 else "ANÓNIMO"
 
-        # ---------------------------------------------------------
-        # 4. TABLERO DE COHORTES (Vista Mensual)
-        # ---------------------------------------------------------
-        # Filtramos los últimos 6 meses con datos para la tabla
-        meses_disponibles = sorted(df_ingresos['Mes_Año'].unique())[-6:] 
-        
-        if not meses_disponibles:
-            st.warning("No hay suficientes meses de datos para generar el reporte histórico.")
-        else:
-            # Pivot Table: Clientes en filas, Meses en columnas
-            df_recent = df_ingresos[df_ingresos['Mes_Año'].isin(meses_disponibles)]
-            pivot_meses = df_recent.pivot_table(
-                index='Cliente_Limpio', columns='Mes_Año', values='Monto', aggfunc='sum', fill_value=0
+            df_ingresos['Cliente_Limpio'] = df_ingresos['Origen'].apply(limpiar_nombre)
+
+            # ---------------------------------------------------------
+            # 4. LÓGICA DE NEGOCIO: SEGMENTACIÓN
+            # ---------------------------------------------------------
+            fecha_hoy = pd.to_datetime("today")
+            
+            df_clientes = df_ingresos.groupby('Cliente_Limpio').agg(
+                Total_Historico=('Monto', 'sum'),
+                Visitas_Totales=('Fecha_dt', 'count'),
+                Ultima_Visita=('Fecha_dt', 'max'),
+                Ticket_Maximo=('Monto', 'max')
             ).reset_index()
 
-            # Unir métricas con tabla mensual
-            df_final = pd.merge(df_clientes, pivot_meses, on='Cliente_Limpio', how='left').fillna(0)
-            
-            # Ordenar: Los que más han gastado en la historia van primero
-            df_final = df_final.sort_values(by='Total_Historico', ascending=False)
+            df_clientes['Dias_Ausente'] = (fecha_hoy - df_clientes['Ultima_Visita']).dt.days
 
-            # --- VISUALIZACIÓN ---
-            st.divider()
-            
-            # Filtros Interactivos
-            col_search, col_filtro = st.columns([2, 1])
-            with col_search:
-                busqueda = st.text_input("🔍 Buscar Cliente:", placeholder="Nombre...")
-            with col_filtro:
-                opciones_seg = ["TODOS"] + sorted(df_final['Segmento'].unique().tolist())
-                filtro_seg = st.selectbox("Filtrar Segmento:", opciones_seg)
+            # Umbrales
+            umbral_vip = ticket_promedio_global * 4        # 4x (Ej: S/ 80)
+            umbral_recurrente = ticket_promedio_global * 1.5 # 1.5x (Ej: S/ 30)
 
-            # Aplicar Lógica de Filtrado
-            df_display = df_final.copy()
-            
-            if busqueda:
-                df_display = df_display[df_display['Cliente_Limpio'].str.contains(busqueda.upper())]
-            
-            if filtro_seg != "TODOS":
-                df_display = df_display[df_display['Segmento'] == filtro_seg]
+            def segmentar_cliente(row):
+                total = row['Total_Historico']
+                visitas = row['Visitas_Totales']
+                dias_off = row['Dias_Ausente']
+                tk_max = row['Ticket_Maximo']
+                
+                estado = ""
+                # Clasificación
+                if tk_max >= umbral_vip and visitas == 1: estado = "🐋 BALLENA (1 Visita)"
+                elif total >= umbral_vip: estado = "💎 VIP (Socio)"
+                elif total >= umbral_recurrente: estado = "🔥 RECURRENTE"
+                else: estado = "🌱 CASUAL"
+                
+                # Churn (Riesgo de Fuga)
+                if dias_off > 45: # Subí a 45 días para ser menos alarmista
+                    if "CASUAL" in estado: estado = "💤 PERDIDO"
+                    else: estado = f"💤 DORMIDO ({estado.split('(')[0].strip()})" 
+                return estado
 
-            # Límite de filas (Top 50) para no saturar, salvo que se use búsqueda
-            if not busqueda and filtro_seg == "TODOS":
-                st.caption(f"Mostrando Top 50 de {len(df_final)} clientes. Usa el buscador para ver más.")
-                df_display = df_display.head(50)
+            df_clientes['Segmento'] = df_clientes.apply(segmentar_cliente, axis=1)
 
-            # Definir columnas a mostrar
-            cols_fijas = ['Cliente_Limpio', 'Segmento', 'Total_Historico', 'Visitas_Totales', 'Dias_Ausente']
-            # Solo mostramos los meses que existen en la data
-            cols_meses_reales = [c for c in df_display.columns if c in meses_disponibles]
-            cols_totales = cols_fijas + cols_meses_reales
-
-            # Renderizar Tabla
-            st.dataframe(
-                df_display[cols_totales],
-                column_config={
-                    "Total_Historico": st.column_config.NumberColumn("Total Hist.", format="S/ %.2f"),
-                    "Cliente_Limpio": "Cliente",
-                    "Dias_Ausente": st.column_config.NumberColumn("Ausencia", format="%d días"),
-                    "Visitas_Totales": st.column_config.NumberColumn("Visitas", format="%d"),
-                },
-                use_container_width=True,
-                hide_index=True
-            )
+            # KPI Cartera
+            total_vip = len(df_clientes[df_clientes['Segmento'].str.contains("VIP")])
+            c_kpi2.metric("Socios VIP Activos", total_vip, "Clientes fidelizados de alto valor")
 
             # ---------------------------------------------------------
-            # 5. ALERTAS DE ACCIÓN (La parte más importante)
+            # 5. VISUALIZACIÓN
             # ---------------------------------------------------------
-            st.divider()
-            c_alert1, c_alert2 = st.columns(2)
             
-            with c_alert1:
-                # Alerta 1: VIPs que se están yendo
-                vips_riesgo = df_final[df_final['Segmento'].str.contains("DORMIDO") & df_final['Segmento'].str.contains("VIP")]
-                if not vips_riesgo.empty:
-                    st.error(f"🚨 **ALERTA ROJA: {len(vips_riesgo)} VIPs en Riesgo**")
-                    st.caption("Eran tus mejores clientes y hace >30 días no vienen.")
-                    st.dataframe(vips_riesgo[['Cliente_Limpio', 'Total_Historico', 'Ultima_Visita']], hide_index=True)
-                else:
-                    st.success("✅ Tus VIPs están sanos y activos.")
+            # TABLA DE COHORTES (Matriz de Retención Simplificada)
+            meses_disponibles = sorted(df_ingresos['Mes_Año'].unique())[-6:] 
+            
+            if meses_disponibles:
+                df_recent = df_ingresos[df_ingresos['Mes_Año'].isin(meses_disponibles)]
+                pivot_meses = df_recent.pivot_table(
+                    index='Cliente_Limpio', columns='Mes_Año', values='Monto', aggfunc='sum', fill_value=0
+                ).reset_index()
+                
+                df_final = pd.merge(df_clientes, pivot_meses, on='Cliente_Limpio', how='left').fillna(0)
+                df_final = df_final.sort_values(by='Total_Historico', ascending=False)
+                
+                st.divider()
+                
+                # Filtros
+                col_search, col_filtro = st.columns([2, 1])
+                with col_search:
+                    busqueda = st.text_input("🔍 Buscar Cliente:", placeholder="Escribe nombre...")
+                with col_filtro:
+                    opciones_seg = ["TODOS"] + sorted(df_final['Segmento'].unique().tolist())
+                    filtro_seg = st.selectbox("Filtrar Segmento:", opciones_seg)
 
-            with c_alert2:
-                # Alerta 2: Ballenas de 1 noche (Retargeting)
-                ballenas = df_final[df_final['Segmento'].str.contains("BALLENA")]
-                if not ballenas.empty:
-                    st.info(f"🎣 **OPORTUNIDAD: {len(ballenas)} Ballenas Detectadas**")
-                    st.caption("Gastaron mucho en 1 sola visita. ¡Invítales algo para que vuelvan!")
-                    st.dataframe(ballenas[['Cliente_Limpio', 'Total_Historico', 'Fecha_Operacion' if 'Fecha_Operacion' in ballenas.columns else 'Ultima_Visita']], hide_index=True)
-                else:
-                    st.info("No hay 'Ballenas de una noche' recientes.")
+                # Filtrado
+                df_display = df_final.copy()
+                if busqueda:
+                    df_display = df_display[df_display['Cliente_Limpio'].str.contains(busqueda.upper())]
+                if filtro_seg != "TODOS":
+                    df_display = df_display[df_display['Segmento'] == filtro_seg]
 
-    except Exception as e:
-        st.error(f"❌ Error leyendo datos: {e}")
-        st.warning("Verifica que tu pestaña tenga exactamente: 'Origen', 'Monto', 'Fecha_Operacion'")
+                # Render Tabla
+                if not busqueda and filtro_seg == "TODOS":
+                     df_display = df_display.head(50) # Top 50 por defecto
+                
+                cols_meses_reales = [c for c in df_display.columns if c in meses_disponibles]
+                cols_totales = ['Cliente_Limpio', 'Segmento', 'Total_Historico', 'Dias_Ausente'] + cols_meses_reales
+
+                st.dataframe(
+                    df_display[cols_totales],
+                    column_config={
+                        "Total_Historico": st.column_config.NumberColumn("Total LTV", format="S/ %.2f"),
+                        "Cliente_Limpio": "Cliente",
+                        "Dias_Ausente": st.column_config.NumberColumn("Días Sin Venir", format="%d"),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                # ALERTAS TÁCTICAS
+                st.divider()
+                c_alert1, c_alert2 = st.columns(2)
+                
+                with c_alert1:
+                    vips_riesgo = df_final[df_final['Segmento'].str.contains("DORMIDO") & df_final['Segmento'].str.contains("VIP")]
+                    if not vips_riesgo.empty:
+                        st.error(f"🚨 **ALERTA DE FUGA: {len(vips_riesgo)} VIPs**")
+                        st.dataframe(vips_riesgo[['Cliente_Limpio', 'Total_Historico', 'Ultima_Visita']], hide_index=True)
+                    else:
+                        st.success("✅ VIPs retenidos correctamente.")
+
+                with c_alert2:
+                    ballenas = df_final[df_final['Segmento'].str.contains("BALLENA")]
+                    if not ballenas.empty:
+                        st.info(f"🎣 **BALLENAS DETECTADAS: {len(ballenas)}**")
+                        st.dataframe(ballenas[['Cliente_Limpio', 'Total_Historico', 'Ultima_Visita']], hide_index=True)
+                    else:
+                        st.info("Sin ballenas recientes.")
+
+        except Exception as e:
+            st.error(f"❌ Error en Procesamiento Yape: {e}")
 
 # ==============================================================================
 # PESTAÑA 7: GESTIÓN DE MARCA
@@ -915,43 +876,56 @@ elif menu == "7. GESTIÓN DE MARCA":
     st.header("📢 Gestión de Marca (MER)")
     st.info("Objetivo: Abrir la 'Mandíbula de Cocodrilo'. Gasto estable, Ventas crecientes.")
 
-    # 1. CONFIGURACIÓN: ENLACE PÚBLICO
-    # 👇 PEGA AQUÍ TU ENLACE CSV DE MARKETING
-    url_marketing = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSvbSRzYorHvUzcXl_GutWeXA6KI6XH8et1qPK6Z8TQhQiTQbgvubOmqZO3bEbWMifqdP7xcUoWwhjr/pubhtml?gid=1643539601&single=true" 
-
-    # Verificación de df_ventas
-    if 'df_ventas' not in locals() or df_ventas.empty:
-        st.warning("⚠️ No se detectaron Ventas cargadas. Ve a 'Finanzas' primero.")
+    # 1. VERIFICACIÓN DE DEPENDENCIAS
+    if 'df_ventas' not in locals() and DATA['ventas'].empty:
+         st.warning("⚠️ No se detectaron Ventas cargadas. Ve a 'Finanzas' primero.")
+         st.stop()
     
+    # 2. CONEXIÓN SEGURA (Usamos el túnel encriptado)
+    df_mkt = DATA['mkt_semanal']
+
+    if df_mkt.empty:
+        st.warning("⚠️ No hay datos de Marketing Semanal cargados.")
     else:
         try:
-            # A. Lectura desde URL
-            df_mkt = pd.read_csv(url_marketing)
+            # --- PROCESAMIENTO ---
+            # El ETL ya limpió 'Gasto_Ads' a numérico. 
+            # Solo aseguramos fechas y ordenamos.
+            
+            # Copia para no alterar el original en caché
+            df_proc = df_mkt.copy()
+            
+            # Asegurar fecha
+            if 'Fecha_Cierre' not in df_proc.columns:
+                 # Intentamos buscar variantes si 'Fecha_Cierre' no existe
+                 cols_fecha = [c for c in df_proc.columns if 'fecha' in c.lower()]
+                 if cols_fecha:
+                     df_proc['Fecha_Cierre'] = df_proc[cols_fecha[0]]
+                 else:
+                     st.error("❌ No se encontró columna de Fecha en Marketing.")
+                     st.stop()
 
-            # B. Limpieza
-            df_mkt['Fecha_Cierre'] = pd.to_datetime(df_mkt['Fecha_Cierre'], dayfirst=True, errors='coerce')
-            df_mkt = df_mkt.sort_values(by='Fecha_Cierre')
+            df_proc['Fecha_Cierre'] = pd.to_datetime(df_proc['Fecha_Cierre'], dayfirst=True, errors='coerce')
+            df_proc = df_proc.dropna(subset=['Fecha_Cierre']).sort_values(by='Fecha_Cierre')
 
-            # C. Procesamiento
+            # Cruzamos con Ventas (Lógica de Atribución Semanal)
             reporte_final = []
             
-            for index, row in df_mkt.iterrows():
+            # Usamos DATA['ventas'] directamente
+            df_v = DATA['ventas']
+            
+            for index, row in df_proc.iterrows():
                 fecha_fin = row['Fecha_Cierre']
+                # Asumimos semana de Lunes a Domingo (o cierre de campaña)
                 fecha_ini = fecha_fin - pd.Timedelta(days=6)
                 
-                # Filtro de ventas
-                mask_ventas = (df_ventas['Fecha_dt'] >= fecha_ini) & (df_ventas['Fecha_dt'] <= fecha_fin)
+                # Filtro de ventas en ese rango de fechas
+                mask_ventas = (df_v['Fecha_dt'] >= fecha_ini) & (df_v['Fecha_dt'] <= fecha_fin)
                 
-                # Suma de dinero
-                if 'Total_Venta' in df_ventas.columns:
-                    venta_semanal = df_ventas.loc[mask_ventas, 'Total_Venta'].sum()
-                elif 'Monto' in df_ventas.columns:
-                    venta_semanal = df_ventas.loc[mask_ventas, 'Monto'].sum()
-                else:
-                    venta_semanal = 0
+                venta_semanal = df_v.loc[mask_ventas, 'Monto'].sum()
 
-                # MER
-                gasto = row['Gasto_Ads']
+                # MER (Marketing Efficiency Ratio)
+                gasto = row.get('Gasto_Ads', 0)
                 mer = venta_semanal / gasto if gasto > 0 else 0
                 
                 fila_procesada = {
@@ -960,14 +934,14 @@ elif menu == "7. GESTIÓN DE MARCA":
                     'Gasto_Ads': gasto,
                     'Ventas_Reales': venta_semanal,
                     'MER': mer,
-                    'Reviews': row['Google_Reviews'],
-                    'Stars': row['Google_Stars']
+                    'Reviews': row.get('Google_Reviews', 0),
+                    'Stars': row.get('Google_Stars', 0)
                 }
                 reporte_final.append(fila_procesada)
                 
             df_final = pd.DataFrame(reporte_final)
             
-            # D. Cálculos extra
+            # Cálculos de Variación
             if not df_final.empty:
                  df_final['Nuevas_Reviews'] = df_final['Reviews'].diff().fillna(0)
 
@@ -975,7 +949,7 @@ elif menu == "7. GESTIÓN DE MARCA":
             # 4. DASHBOARD VISUAL
             # ---------------------------------------------------------
             if not df_final.empty:
-                # Datos KPIs
+                # Datos KPIs (Última semana cerrada)
                 actual = df_final.iloc[-1]
                 anterior = df_final.iloc[-2] if len(df_final) > 1 else actual
                 
@@ -984,10 +958,15 @@ elif menu == "7. GESTIÓN DE MARCA":
                 
                 # MER
                 delta_mer = actual['MER'] - anterior['MER']
-                k1.metric("MER (Retorno)", f"{actual['MER']:.1f}x", f"{delta_mer:.1f} vs anterior")
+                k1.metric(
+                    "MER (Retorno)", 
+                    f"{actual['MER']:.1f}x", 
+                    f"{delta_mer:.1f} vs anterior",
+                    help="Por cada S/1 invertido, cuántos S/ vendiste."
+                )
                 
                 # Gasto
-                k2.metric("Gasto Ads Semanal", f"S/ {actual['Gasto_Ads']}", f"Generó: S/ {actual['Ventas_Reales']:.0f}")
+                k2.metric("Gasto Ads Semanal", f"S/ {actual['Gasto_Ads']:,.0f}", f"Generó: S/ {actual['Ventas_Reales']:,.0f}")
                 
                 # Fama
                 delta_rev = actual['Reviews'] - anterior['Reviews']
@@ -995,34 +974,43 @@ elif menu == "7. GESTIÓN DE MARCA":
                 
                 st.markdown("---")
                 
-                # --- GRÁFICO ---
+                # --- GRÁFICO (Mandíbula de Cocodrilo) ---
                 st.subheader("🐊 La Mandíbula de Cocodrilo (Inversión vs Ventas)")
                 
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
 
+                # Barras: Ventas (Lo que queremos que suba)
                 fig.add_trace(
                     go.Bar(x=df_final['Semana'], y=df_final['Ventas_Reales'], name="Ventas (S/)", marker_color='#00CC96', opacity=0.6),
                     secondary_y=False
                 )
 
+                # Línea: Gasto (Lo que queremos controlar)
                 fig.add_trace(
                     go.Scatter(x=df_final['Semana'], y=df_final['Gasto_Ads'], name="Inversión Ads (S/)", mode='lines+markers', line=dict(color='#EF553B', width=3)),
                     secondary_y=True
                 )
 
-                fig.update_layout(title_text="Correlación Publicitaria", height=450, showlegend=True)
-                fig.update_yaxes(title_text="Ventas (S/)", secondary_y=False)
-                fig.update_yaxes(title_text="Gasto Ads (S/)", secondary_y=True)
+                fig.update_layout(title_text="Correlación Publicitaria", height=450, showlegend=True, template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)')
+                fig.update_yaxes(title_text="Ventas (S/)", secondary_y=False, showgrid=False)
+                fig.update_yaxes(title_text="Gasto Ads (S/)", secondary_y=True, showgrid=False)
 
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Tabla
+                # Tabla Detallada
                 with st.expander("🔎 Ver Bitácora Semanal"):
-                    st.dataframe(df_final.sort_values(by='Fecha_Full', ascending=False), use_container_width=True)
+                    st.dataframe(
+                        df_final.sort_values(by='Fecha_Full', ascending=False), 
+                        column_config={
+                            "Gasto_Ads": st.column_config.NumberColumn("Inversión", format="S/ %.2f"),
+                            "Ventas_Reales": st.column_config.NumberColumn("Ventas", format="S/ %.2f"),
+                            "MER": st.column_config.NumberColumn("MER", format="%.1fx"),
+                        },
+                        use_container_width=True
+                    )
 
             else:
                 st.info("El archivo procesado está vacío.")
 
         except Exception as e:
-            st.error(f"❌ Error leyendo URL Marketing: {e}")
-            st.write("Verifica tus columnas y que el enlace sea un CSV público.")
+            st.error(f"❌ Error de Lógica en Marketing: {e}")
