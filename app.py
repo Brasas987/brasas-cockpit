@@ -72,53 +72,28 @@ st.markdown("""
 # ==============================================================================
 # 2. GESTIÓN DE CREDENCIALES Y CONEXIÓN
 # ==============================================================================
-@st.cache_resource
-def connect_google_sheets():
-    """Conecta con la API de Google usando los Secretos de Streamlit"""
-    scope = ['https://spreadsheets.google.com/feeds','https://www.googleapis.com/auth/drive']
-    try:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        return client
-    except Exception as e:
-        st.error(f"❌ Error Crítico de Autenticación: {e}")
-        st.stop()
-
-# --- MAPA DE ARQUITECTURA DE ARCHIVOS (IDs REALES) ---
-# ⚠️ IMPORTANTE: Asegúrate de que estos IDs sean los correctos en GitHub
-IDS = {
-    "REGISTROS":  "https://docs.google.com/spreadsheets/d/1pbpbkZWH6RHpUwdjrTFGtkNAi4ameR2PJZVbR5OPeZQ/edit?gid=1445845805#gid=1445845805",
-    "LIBROS":     "https://docs.google.com/spreadsheets/d/1-juSBgRcNdKWNjDL6ZuKcBIVVQXtnpL3qCR9Z1AWQyU/edit?gid=0#gid=0",
-    "COSTOS":     "https://docs.google.com/spreadsheets/d/1JNKE-5nfOsJ7U9k0bCLAW-xjOzSGRG15rdGdWrC3h8U/edit?gid=1976317468#gid=1976317468",
-    "INVENTARIO": "https://docs.google.com/spreadsheets/d/1vDI6y_xN-abIFkv9z63rc94PTnCtJURC4r7vN3RCeLo/edit?gid=10562125#gid=10562125",
-    "CAJA":       "https://docs.google.com/spreadsheets/d/1Ck6Um7PG8uZ626x9kMvf1tMlBckBUHBjy6dTYRxUIZY/edit?gid=1914701014#gid=1914701014",
-    "FORECAST":   "https://docs.google.com/spreadsheets/d/1rmb0tvFhNQgiVOvUC3u5IxeBSA1w4HiY5lr13sD1VU0/edit?gid=0#gid=0"
-}
-
-# ==============================================================================
-# 3. MOTOR DE EXTRACCIÓN Y LIMPIEZA DE DATOS (ETL DEFENSIVO)
-# ==============================================================================
-@st.cache_data(ttl=600) # Caché de 10 minutos para velocidad
+@st.cache_data(ttl=600)
 def load_all_data():
     client = connect_google_sheets()
     DB = {}
     
-    # Función auxiliar robusta para leer hojas
+    # Función auxiliar para lectura segura
     def safe_read(file_key, sheet_name):
         try:
-            if IDS[file_key].startswith("PON_AQUI"): return pd.DataFrame() # Evita error si no hay ID
+            # Recuperamos el ID desde los secretos cargados en memoria
+            sheet_id = IDS.get(file_key)
+            if not sheet_id: return pd.DataFrame() # Si no existe la clave, retorna vacío
             
-            sh = client.open_by_key(IDS[file_key])
+            sh = client.open_by_key(sheet_id)
             ws = sh.worksheet(sheet_name)
             raw_data = ws.get_all_records()
-            df = pd.DataFrame(raw_data)
-            return df
-        except Exception:
-            # Retorna DF vacío si falla para no romper la app entera
+            return pd.DataFrame(raw_data)
+        except Exception as e:
+            # Log silencioso en consola del servidor, no rompe la UI
+            print(f"⚠️ Error leyendo {sheet_name} en {file_key}: {e}")
             return pd.DataFrame()
 
-    # --- CARGA DE DATOS ---
+    # --- CARGA DE DATOS CORE ---
     DB['ventas'] = safe_read("REGISTROS", "BD_Ventas")
     DB['feriados'] = safe_read("REGISTROS", "MASTER_FERIADOS")
     DB['partidos'] = safe_read("REGISTROS", "MASTER_PARTIDOS")
@@ -131,23 +106,36 @@ def load_all_data():
     DB['soberania'] = safe_read("FORECAST", "OUT_Soberania_Financiera") 
     DB['deuda'] = safe_read("LIBROS", "Libro_Cuentas_Pagar")
 
+    # --- CARGA DE DATOS NUEVOS (MKT & CX) - YA NO USAMOS CSV PÚBLICOS ---
+    # Nota: He direccionado a "MKT_RESULTADOS" para los Outputs procesados. 
+    # Si prefieres la data cruda, cambia "MKT_RESULTADOS" por "MKT_REGISTROS".
+    
+    DB['menu_eng'] = safe_read("MKT_RESULTADOS", "OUT_Menu_Engineering")
+    DB['cx_tiempos'] = safe_read("MKT_RESULTADOS", "BD_CX_Tiempos") 
+    DB['yape'] = safe_read("MKT_RESULTADOS", "Data_Clientes_Yape")
+    DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal") # Este suele estar en Registros
+
     # --- LIMPIEZA DE FECHAS (GLOBAL) ---
-    # Intentamos convertir cualquier columna que parezca fecha en datetime
     for key in DB:
         if not DB[key].empty:
-            for col_name in ['Fecha', 'Fecha_dt', 'ds', 'Marca temporal', 'Fecha_Vencimiento']:
+            # Lista expandida de posibles nombres de columnas de fecha
+            date_cols = ['Fecha', 'Fecha_dt', 'ds', 'Marca temporal', 'Fecha_Vencimiento', 
+                         'Fecha_Operacion', 'Fecha_Cierre', 'fecha', 'Date']
+            
+            for col_name in date_cols:
                 if col_name in DB[key].columns:
-                    # dayfirst=True es critico para fechas latinas (DD/MM/YYYY)
+                    # Convertimos a datetime
                     DB[key]['Fecha_dt'] = pd.to_datetime(DB[key][col_name], dayfirst=True, errors='coerce')
-                    break # Solo convertimos la primera columna de fecha que encontremos
+                    # Si la columna original era distinta, mantenemos 'Fecha_dt' como la estándar
+                    break
 
     # --- LIMPIEZA DE NÚMEROS (GLOBAL) ---
-    # Limpia simbolos de moneda "S/" y comas ","
     def clean_currency(x):
         if isinstance(x, str):
             return x.replace('S/', '').replace(',', '').replace('%', '').strip()
         return x
 
+    # Aplicamos limpieza a columnas monetarias conocidas
     # Ventas
     if not DB['ventas'].empty and 'Total_Venta' in DB['ventas'].columns:
         DB['ventas']['Monto'] = pd.to_numeric(DB['ventas']['Total_Venta'].apply(clean_currency), errors='coerce').fillna(0)
@@ -155,28 +143,36 @@ def load_all_data():
     # Merma
     if not DB['merma'].empty and 'Merma_Soles' in DB['merma'].columns:
         DB['merma']['Monto_Merma'] = pd.to_numeric(DB['merma']['Merma_Soles'].apply(clean_currency), errors='coerce').fillna(0)
-    
-    # Costos (Margen)
+        
+    # Costos
     if not DB['costos'].empty and 'Margen_%' in DB['costos'].columns:
         DB['costos']['Margen_Pct'] = pd.to_numeric(DB['costos']['Margen_%'].apply(clean_currency), errors='coerce').fillna(0)
-    
-    # Soberania (Runway y Liquidez)
-    if not DB['soberania'].empty:
-        cols_fin = ['Runway_Dias', 'Liquidez_Neta', 'Burn_Rate_Diario', 'Deuda_TC_Auditada']
-        for col in cols_fin:
-            if col in DB['soberania'].columns:
-                DB['soberania'][col] = pd.to_numeric(DB['soberania'][col].apply(clean_currency), errors='coerce').fillna(0)
 
-    # Deuda
-    if not DB['deuda'].empty and 'Saldo_Pendiente' in DB['deuda'].columns:
-        DB['deuda']['Saldo'] = pd.to_numeric(DB['deuda']['Saldo_Pendiente'].apply(clean_currency), errors='coerce').fillna(0)
+    # Menu Engineering (NUEVO)
+    if not DB['menu_eng'].empty:
+        cols_eng = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num']
+        for c in cols_eng:
+            if c in DB['menu_eng'].columns:
+                DB['menu_eng'][c] = pd.to_numeric(DB['menu_eng'][c].apply(clean_currency), errors='coerce').fillna(0)
+
+    # Yape (NUEVO)
+    if not DB['yape'].empty:
+         # Estandarización de nombres
+        mapa_cols = {'monto': 'Monto', 'origen': 'Origen', 'fecha': 'Fecha_Operacion'}
+        DB['yape'].rename(columns=mapa_cols, inplace=True)
+        if 'Monto' in DB['yape'].columns:
+            DB['yape']['Monto'] = pd.to_numeric(DB['yape']['Monto'].apply(clean_currency), errors='coerce').fillna(0)
+
+    # Marketing Semanal (NUEVO)
+    if not DB['mkt_semanal'].empty and 'Gasto_Ads' in DB['mkt_semanal'].columns:
+        DB['mkt_semanal']['Gasto_Ads'] = pd.to_numeric(DB['mkt_semanal']['Gasto_Ads'].apply(clean_currency), errors='coerce').fillna(0)
 
     return DB
 
 # EJECUCIÓN DEL ETL
 try:
     DATA = load_all_data()
-    STATUS_CONN = "🟢 ONLINE | DATA SYNCED"
+    STATUS_CONN = "🟢 ONLINE | SECURE CONNECTION"
 except Exception as e:
     STATUS_CONN = f"🔴 ERROR CRÍTICO: {e}"
     st.stop()
