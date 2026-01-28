@@ -189,6 +189,77 @@ def load_all_data():
 
     return DB
 
+# ==============================================================================
+# MOTOR ECONOMÉTRICO (ETL AVANZADO)
+# ==============================================================================
+@st.cache_data(ttl=600)
+def build_econometric_master(db_data):
+    """
+    Construye la Tabla Maestra unificando Ventas, Contexto y Marketing.
+    No filtra fechas para no perder memoria histórica.
+    """
+    # 1. Extraer Dataframes
+    df_v = db_data.get('ventas', pd.DataFrame()).copy()
+    df_ctx = db_data.get('diaria', pd.DataFrame()).copy() # Asegúrate de cargar 'Data_Diaria' en load_all_data como 'diaria'
+    df_ads = db_data.get('mkt_semanal', pd.DataFrame()).copy()
+
+    if df_v.empty: return pd.DataFrame()
+
+    # 2. Agrupación Diaria de Ventas (Y y Precio)
+    # Calculamos Precio Implícito = Venta Total / Cantidad Platos
+    df_daily = df_v.groupby('Fecha_dt').agg({
+        'Monto': 'sum',
+        'Cantidad': 'sum'
+    }).reset_index()
+    
+    # Evitar división por cero
+    df_daily['Precio_Promedio_Real'] = np.where(
+        df_daily['Cantidad'] > 0, 
+        df_daily['Monto'] / df_daily['Cantidad'], 
+        0
+    )
+
+    # 3. Procesamiento de Marketing (Desagregación Semanal -> Diaria)
+    ads_daily_list = []
+    if not df_ads.empty:
+        # Asumimos que la columna fecha es 'Fecha_Cierre' o 'Fecha_dt'
+        col_fecha_ads = 'Fecha_dt' if 'Fecha_dt' in df_ads.columns else 'Fecha_Cierre'
+        
+        if col_fecha_ads in df_ads.columns:
+            df_ads[col_fecha_ads] = pd.to_datetime(df_ads[col_fecha_ads], dayfirst=True, errors='coerce')
+            df_ads = df_ads.sort_values(col_fecha_ads)
+
+            for idx, row in df_ads.iterrows():
+                curr_date = row[col_fecha_ads]
+                gasto = row.get('Gasto_Ads', 0)
+                # Prorrateo simple 7 días hacia atrás
+                gasto_diario = gasto / 7
+                for i in range(7):
+                    day_date = curr_date - timedelta(days=i)
+                    ads_daily_list.append({'Fecha_dt': day_date, 'Gasto_Ads_Soles': gasto_diario})
+    
+    if ads_daily_list:
+        df_ads_daily = pd.DataFrame(ads_daily_list).groupby('Fecha_dt')['Gasto_Ads_Soles'].sum().reset_index()
+    else:
+        df_ads_daily = pd.DataFrame(columns=['Fecha_dt', 'Gasto_Ads_Soles'])
+
+    # 4. Fusión (Merge) - The Golden Dataset
+    df_master = pd.merge(df_daily, df_ads_daily, on='Fecha_dt', how='left')
+    
+    # Fusionar con Contexto (Lluvia, Competencia, etc)
+    if not df_ctx.empty and 'Fecha_dt' in df_ctx.columns:
+        # Seleccionamos solo columnas relevantes para no ensuciar
+        cols_ctx = ['Fecha_dt', 'Lluvia_Intensa', 'Competencia_Agresiva', 'Dia_Huelga', 'Stockout_Cierre']
+        cols_existing = [c for c in cols_ctx if c in df_ctx.columns]
+        df_master = pd.merge(df_master, df_ctx[cols_existing], on='Fecha_dt', how='left')
+
+    # Limpieza final
+    df_master['Gasto_Ads_Soles'] = df_master['Gasto_Ads_Soles'].fillna(0)
+    df_master = df_master.sort_values('Fecha_dt')
+    
+    return df_master
+
+
 # EJECUCIÓN DEL ETL
 try:
     DATA = load_all_data()
