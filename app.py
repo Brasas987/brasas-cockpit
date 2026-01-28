@@ -894,35 +894,75 @@ elif menu == "6. GROWTH & LEALTAD":
             st.error(f"❌ Error en Procesamiento Yape: {e}")
 
 # ==============================================================================
-# PESTAÑA 7: DIAGNÓSTICO DE MARCA (MODO DEBUG)
+# PESTAÑA 7: GESTIÓN DE MARCA (MODO DIAGNÓSTICO)
 # ==============================================================================
 elif menu == "7. GESTIÓN DE MARCA":
-    st.header("🛠️ Diagnóstico de Conexión (Modo CTO)")
+    st.header("📢 Gestión de Marca (MER)")
     
-    # 1. Verificamos qué descargó el robot
-    df_mkt = DATA['mkt_semanal']
-    
-    st.write("### 1. Estado de la Tabla 'BD_Marketing_Semanal'")
+    # 1. VERIFICACIÓN DE CONEXIÓN
+    try:
+        df_mkt = DATA['mkt_semanal']
+        st.write(f"📡 Estado de Conexión: El sistema descargó **{len(df_mkt)} filas**.")
+    except:
+        st.error("❌ ERROR CRÍTICO: No se pudo conectar con la hoja 'BD_Marketing_Semanal'.")
+        st.info("Verifica que el nombre de la pestaña en el Excel sea idéntico.")
+        st.stop()
+
+    # 2. SI LA TABLA ESTÁ VACÍA
     if df_mkt.empty:
-        st.error("❌ LA TABLA ESTÁ VACÍA.")
-        st.info("""
-        Posibles causas:
-        1. La pestaña en el Google Sheet no se llama exactamente 'BD_Marketing_Semanal'.
-        2. El ID del archivo 'MKT_REGISTROS' en secrets.toml no es el correcto.
-        3. El archivo no tiene permisos para el Service Account.
-        """)
+        st.warning("⚠️ La tabla existe pero ESTÁ VACÍA. Escribe datos en la fila 2 del Excel.")
+    
+    # 3. SI HAY DATOS, VAMOS A VERLOS
     else:
-        st.success(f"✅ Conexión Exitosa: Se descargaron {len(df_mkt)} filas.")
+        st.subheader("🕵️ Auditoría de Columnas")
+        st.write("El robot ve estas columnas (copia exacta):")
+        st.code(df_mkt.columns.tolist())
         
-        st.write("### 2. Revisión de Columnas Detectadas")
-        st.write("El robot ve estas columnas en tu Excel:", df_mkt.columns.tolist())
-        
-        st.write("### 3. Vista Previa de Datos (Primeras 5 filas)")
-        st.dataframe(df_mkt.head())
-        
-        st.write("### 4. Prueba de Fecha")
-        if 'Fecha_Cierre' in df_mkt.columns:
-            st.success("✅ Columna 'Fecha_Cierre' encontrada.")
-        else:
-            st.error("❌ NO se encontró la columna 'Fecha_Cierre'.")
-            st.warning("El código necesita esta columna para saber en qué semana colocar el gasto.")
+        st.subheader("📋 Vista Previa de Datos Crudos")
+        st.dataframe(df_mkt)
+
+        # 4. INTENTO DE PROCESAMIENTO
+        try:
+            # Copia para procesar
+            df_proc = df_mkt.copy()
+            
+            # Buscamos la columna de fecha
+            if 'Fecha_Cierre' not in df_proc.columns:
+                 st.error("❌ FALTA LA COLUMNA 'Fecha_Cierre'")
+                 st.stop()
+
+            # Convertimos fecha
+            df_proc['Fecha_Cierre'] = pd.to_datetime(df_proc['Fecha_Cierre'], dayfirst=True, errors='coerce')
+            filas_validas = df_proc.dropna(subset=['Fecha_Cierre'])
+            
+            st.success(f"✅ Fechas válidas encontradas: {len(filas_validas)}")
+            
+            if len(filas_validas) == 0:
+                st.error("❌ Hay datos, pero las fechas no tienen formato válido (dd/mm/yyyy).")
+
+            # Cruzamos con Ventas
+            st.write("---")
+            st.write("🔄 Cruzando con Ventas...")
+            
+            reporte_final = []
+            df_v = DATA['ventas']
+            
+            for index, row in filas_validas.iterrows():
+                fecha_fin = row['Fecha_Cierre']
+                fecha_ini = fecha_fin - pd.Timedelta(days=6)
+                
+                # Filtro de ventas
+                mask_ventas = (df_v['Fecha_dt'] >= fecha_ini) & (df_v['Fecha_dt'] <= fecha_fin)
+                venta_semanal = df_v.loc[mask_ventas, 'Monto'].sum()
+                gasto = row.get('Gasto_Ads', 0)
+                
+                reporte_final.append({
+                    'Semana': fecha_fin.strftime("%d-%b"),
+                    'Gasto': gasto,
+                    'Venta_Atribuida': venta_semanal
+                })
+            
+            st.dataframe(pd.DataFrame(reporte_final))
+            
+        except Exception as e:
+            st.error(f"❌ Error en el procesamiento lógico: {e}")
