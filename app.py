@@ -202,14 +202,9 @@ except Exception as e:
 hoy = datetime.now() - timedelta(hours=5)
 
 with st.sidebar:
-    # --- 1. LOGO CORPORATIVO ---
-    # Intentamos cargar la imagen. Si falla, mostramos texto de respaldo.
-    try:
-        # width=200 ajusta el tamaño. Cámbialo si tu logo es muy grande o chico.
-        st.image("logo.png", use_container_width=True) 
-    except:
-        st.warning("⚠️ Falta subir 'logo.png' a GitHub")
-        st.title("🔥 BRASAS CAPITALES")
+    st.title("🔥 BRASAS CAPITALES")
+    st.caption(f"CEO Dashboard | {hoy.strftime('%d-%b-%Y')}")
+    st.markdown("---")
 
     # --- 2. FECHA Y CONTEXTO ---
     st.caption(f"CEO Dashboard | {hoy.strftime('%d-%b-%Y')}")
