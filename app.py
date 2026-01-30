@@ -99,18 +99,21 @@ def load_all_data():
     client = connect_google_sheets()
     DB = {}
     
-    # Función auxiliar para lectura segura
+    # --- AQUÍ ESTÁ EL CAMBIO PARA VER EL ERROR REAL ---
     def safe_read(file_key, sheet_name):
         try:
             sheet_id = IDS.get(file_key)
-            if not sheet_id: return pd.DataFrame()
+            if not sheet_id: 
+                st.error(f"❌ ID no encontrado en secrets.toml para: {file_key}")
+                return pd.DataFrame()
             
             sh = client.open_by_key(sheet_id)
             ws = sh.worksheet(sheet_name)
             raw_data = ws.get_all_records()
             return pd.DataFrame(raw_data)
         except Exception as e:
-            print(f"⚠️ Error leyendo {sheet_name} en {file_key}: {e}")
+            # ESTO ES LO QUE TE DIRÁ LA VERDAD:
+            st.error(f"💥 ERROR CRÍTICO leyendo '{sheet_name}' (Clave: {file_key}): {e}")
             return pd.DataFrame()
 
     # --- CARGA DE DATOS CORE ---
@@ -139,17 +142,10 @@ def load_all_data():
             
             for col_name in date_cols:
                 if col_name in DB[key].columns:
-                    # 1. Convertimos a string para asegurar manipulación
                     col_data = DB[key][col_name].astype(str)
-                    
-                    # 2. Intentamos formato DD/MM/AAAA primero
                     DB[key]['Fecha_dt'] = pd.to_datetime(col_data, dayfirst=True, errors='coerce')
-                    
-                    # 3. Si falló masivamente (ej: venía en formato ISO YYYY-MM-DD), probamos mixed
                     if DB[key]['Fecha_dt'].isna().mean() > 0.8:
                         DB[key]['Fecha_dt'] = pd.to_datetime(col_data, format='mixed', errors='coerce')
-
-                    # 4. Eliminamos filas donde la fecha siga siendo nula (basura)
                     DB[key] = DB[key].dropna(subset=['Fecha_dt'])
                     break
 
@@ -190,7 +186,6 @@ def load_all_data():
         DB['mkt_semanal']['Gasto_Ads'] = pd.to_numeric(DB['mkt_semanal']['Gasto_Ads'].apply(clean_currency), errors='coerce').fillna(0)
 
     return DB
-
 # ==============================================================================
 # MOTOR ECONOMÉTRICO (ETL AVANZADO)
 # ==============================================================================
