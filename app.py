@@ -85,8 +85,6 @@ def connect_google_sheets():
         st.error(f"❌ Error Crítico de Autenticación: {e}")
         st.stop()
 
-# --- CORRECCIÓN 1: CARGA DE IDs DESDE SECRETOS ---
-# Sin esto, load_all_data fallará porque no sabe qué es 'IDS'
 try:
     IDS = st.secrets["sheets"]
 except Exception as e:
@@ -104,16 +102,14 @@ def load_all_data():
     # Función auxiliar para lectura segura
     def safe_read(file_key, sheet_name):
         try:
-            # Recuperamos el ID desde los secretos cargados en memoria
             sheet_id = IDS.get(file_key)
-            if not sheet_id: return pd.DataFrame() # Si no existe la clave, retorna vacío
+            if not sheet_id: return pd.DataFrame()
             
             sh = client.open_by_key(sheet_id)
             ws = sh.worksheet(sheet_name)
             raw_data = ws.get_all_records()
             return pd.DataFrame(raw_data)
         except Exception as e:
-            # Log silencioso en consola del servidor, no rompe la UI
             print(f"⚠️ Error leyendo {sheet_name} en {file_key}: {e}")
             return pd.DataFrame()
 
@@ -135,18 +131,26 @@ def load_all_data():
     DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal")
     DB['diaria'] = safe_read("REGISTROS", "Data_Diaria")
 
-    # --- LIMPIEZA DE FECHAS (GLOBAL) ---
+    # --- LIMPIEZA DE FECHAS (GLOBAL CORREGIDA) ---
     for key in DB:
         if not DB[key].empty:
-            # Lista expandida de posibles nombres de columnas de fecha
             date_cols = ['Fecha', 'Fecha_dt', 'ds', 'Marca temporal', 'Fecha_Vencimiento', 
                          'Fecha_Operacion', 'Fecha_Cierre', 'fecha', 'Date']
             
             for col_name in date_cols:
                 if col_name in DB[key].columns:
-                    # Convertimos a datetime
-                    DB[key]['Fecha_dt'] = pd.to_datetime(DB[key][col_name], dayfirst=True, errors='coerce')
-                    # Si la columna original era distinta, mantenemos 'Fecha_dt' como la estándar
+                    # 1. Convertimos a string para asegurar manipulación
+                    col_data = DB[key][col_name].astype(str)
+                    
+                    # 2. Intentamos formato DD/MM/AAAA primero
+                    DB[key]['Fecha_dt'] = pd.to_datetime(col_data, dayfirst=True, errors='coerce')
+                    
+                    # 3. Si falló masivamente (ej: venía en formato ISO YYYY-MM-DD), probamos mixed
+                    if DB[key]['Fecha_dt'].isna().mean() > 0.8:
+                        DB[key]['Fecha_dt'] = pd.to_datetime(col_data, format='mixed', errors='coerce')
+
+                    # 4. Eliminamos filas donde la fecha siga siendo nula (basura)
+                    DB[key] = DB[key].dropna(subset=['Fecha_dt'])
                     break
 
     # --- LIMPIEZA DE NÚMEROS (GLOBAL) ---
@@ -155,7 +159,6 @@ def load_all_data():
             return x.replace('S/', '').replace(',', '').replace('%', '').strip()
         return x
 
-    # Aplicamos limpieza a columnas monetarias conocidas
     # Ventas
     if not DB['ventas'].empty and 'Total_Venta' in DB['ventas'].columns:
         DB['ventas']['Monto'] = pd.to_numeric(DB['ventas']['Total_Venta'].apply(clean_currency), errors='coerce').fillna(0)
@@ -177,7 +180,6 @@ def load_all_data():
 
     # Yape
     if not DB['yape'].empty:
-         # Estandarización de nombres
         mapa_cols = {'monto': 'Monto', 'origen': 'Origen', 'fecha': 'Fecha_Operacion'}
         DB['yape'].rename(columns=mapa_cols, inplace=True)
         if 'Monto' in DB['yape'].columns:
@@ -198,31 +200,25 @@ def build_econometric_master(db_data):
     Construye la Tabla Maestra unificando Ventas, Contexto y Marketing.
     No filtra fechas para no perder memoria histórica.
     """
-    # 1. Extraer Dataframes
     df_v = db_data.get('ventas', pd.DataFrame()).copy()
     df_ctx = db_data.get('diaria', pd.DataFrame()).copy() 
     df_ads = db_data.get('mkt_semanal', pd.DataFrame()).copy()
 
     if df_v.empty: return pd.DataFrame()
 
-    # 2. Agrupación Diaria de Ventas (Y y Precio)
-    # Calculamos Precio Implícito = Venta Total / Cantidad Platos
     df_daily = df_v.groupby('Fecha_dt').agg({
         'Monto': 'sum',
         'Cantidad': 'sum'
     }).reset_index()
     
-    # Evitar división por cero
     df_daily['Precio_Promedio_Real'] = np.where(
         df_daily['Cantidad'] > 0, 
         df_daily['Monto'] / df_daily['Cantidad'], 
         0
     )
 
-    # 3. Procesamiento de Marketing (Desagregación Semanal -> Diaria)
     ads_daily_list = []
     if not df_ads.empty:
-        # Asumimos que la columna fecha es 'Fecha_Cierre' o 'Fecha_dt'
         col_fecha_ads = 'Fecha_dt' if 'Fecha_dt' in df_ads.columns else 'Fecha_Cierre'
         
         if col_fecha_ads in df_ads.columns:
@@ -232,7 +228,6 @@ def build_econometric_master(db_data):
             for idx, row in df_ads.iterrows():
                 curr_date = row[col_fecha_ads]
                 gasto = row.get('Gasto_Ads', 0)
-                # Prorrateo simple 7 días hacia atrás
                 gasto_diario = gasto / 7
                 for i in range(7):
                     day_date = curr_date - timedelta(days=i)
@@ -243,17 +238,13 @@ def build_econometric_master(db_data):
     else:
         df_ads_daily = pd.DataFrame(columns=['Fecha_dt', 'Gasto_Ads_Soles'])
 
-    # 4. Fusión (Merge) - The Golden Dataset
     df_master = pd.merge(df_daily, df_ads_daily, on='Fecha_dt', how='left')
     
-    # Fusionar con Contexto (Lluvia, Competencia, etc)
     if not df_ctx.empty and 'Fecha_dt' in df_ctx.columns:
-        # Seleccionamos solo columnas relevantes para no ensuciar
         cols_ctx = ['Fecha_dt', 'Lluvia_Intensa', 'Competencia_Agresiva', 'Dia_Huelga', 'Stockout_Cierre']
         cols_existing = [c for c in cols_ctx if c in df_ctx.columns]
         df_master = pd.merge(df_master, df_ctx[cols_existing], on='Fecha_dt', how='left')
 
-    # Limpieza final
     df_master['Gasto_Ads_Soles'] = df_master['Gasto_Ads_Soles'].fillna(0)
     df_master = df_master.sort_values('Fecha_dt')
     
@@ -278,17 +269,14 @@ with st.sidebar:
     st.caption(f"CEO Dashboard | {hoy.strftime('%d-%b-%Y')}")
     st.markdown("---")
     
-    # --- MENÚ DE NAVEGACIÓN ---
     menu = st.radio("MENÚ ESTRATÉGICO", 
         ["1. CORPORATE OVERVIEW", "2. EFICIENCIA & COSTOS", "3. FINANZAS & RUNWAY", "4. MENU ENGINEERING", "5. CX & TIEMPOS", "6. GROWTH & LEALTAD", "7. GESTION DE MARCA", "8. MODELO ECONOMÉTRICO"])
     
     st.markdown("---")
     
-    # Filtro Global de Tiempo
     st.markdown("### 📅 Filtro de Tiempo")
     filtro_tiempo = st.selectbox("Ventana de Análisis", ["Mes en Curso (MTD)", "Últimos 30 Días"])
     
-    # Lógica de Fechas
     if filtro_tiempo == "Mes en Curso (MTD)":
         start_date = hoy.replace(day=1)
         periodo_label = "Acumulado Mes"
@@ -305,13 +293,11 @@ with st.sidebar:
 if menu == "1. CORPORATE OVERVIEW":
     st.header(f"🏥 Signos Vitales ({periodo_label})")
     
-    # --- PROCESAMIENTO DE DATOS ---
     kpi_venta = 0.0
     kpi_margen_avg = 0.0
     kpi_merma_total = 0.0
     kpi_runway = 0.0
     
-    # Variables Comerciales
     ticket_promedio = 0.0
     num_transacciones = 0
     pe_diario = 0.0
@@ -320,15 +306,12 @@ if menu == "1. CORPORATE OVERVIEW":
     # 1. Ventas & Ticket Promedio
     df_v = DATA['ventas']
     if not df_v.empty:
-        # Filtro de fecha seleccionado
         mask_v = (df_v['Fecha_dt'].dt.date >= start_date.date()) & (df_v['Fecha_dt'].dt.date <= hoy.date())
         df_filtrada = df_v[mask_v]
         kpi_venta = df_filtrada['Monto'].sum()
         
-        # Venta solo de HOY (para la meta diaria)
         venta_hoy = df_v[df_v['Fecha_dt'].dt.date == hoy.date()]['Monto'].sum()
         
-        # Ticket Promedio
         if 'ID_Ticket' in df_filtrada.columns:
             df_tickets = df_filtrada.groupby('ID_Ticket')['Monto'].sum()
             num_transacciones = df_tickets.count()
@@ -343,13 +326,12 @@ if menu == "1. CORPORATE OVERVIEW":
         mask_m = (df_m['Fecha_dt'].dt.date >= start_date.date()) & (df_m['Fecha_dt'].dt.date <= hoy.date())
         kpi_merma_total = df_m[mask_m]['Monto_Merma'].sum()
 
-    # 3. Datos Financieros (Para Meta Diaria)
+    # 3. Datos Financieros
     df_sob = DATA['soberania']
     if not df_sob.empty:
         ultimo = df_sob.iloc[-1]
         kpi_runway = ultimo.get('Runway_Dias', 0)
         
-        # Cálculo Rápido PE (Burn Rate / Margen)
         burn = ultimo.get('Burn_Rate_Diario', 0)
         try:
             ratio = float(str(ultimo.get('Ratio_Costo_Real', '0.6')).replace('%',''))
@@ -360,8 +342,6 @@ if menu == "1. CORPORATE OVERVIEW":
         pe_diario = burn / margen_contrib if margen_contrib > 0 else 9999
 
     # --- VISUALIZACIÓN ---
-    
-    # 1. BLOQUE DE META DIARIA (BARRA DE PROGRESO TÁCTICA)
     st.markdown("##### 🏁 Meta del Día (Break-even Operativo)")
     pct_meta = min(venta_hoy / pe_diario, 1.0) if pe_diario > 0 else 0
     cols_meta = st.columns([3, 1])
@@ -372,7 +352,6 @@ if menu == "1. CORPORATE OVERVIEW":
     
     st.markdown("---")
 
-    # 2. TARJETAS PRINCIPALES
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("VENTAS ACUMULADAS", f"S/ {kpi_venta:,.0f}", periodo_label)
     with col2: st.metric("TICKET PROMEDIO", f"S/ {ticket_promedio:,.1f}", f"{num_transacciones} Mesas")
@@ -385,10 +364,8 @@ if menu == "1. CORPORATE OVERVIEW":
 
     st.markdown("---")
 
-    # 3. GRÁFICOS (Ventas y BCG)
     c_left, c_right = st.columns([2, 1])
     
-    # Gráfico Ventas
     with c_left:
         st.subheader("📈 Rendimiento Comercial")
         fig_main = go.Figure()
@@ -398,10 +375,8 @@ if menu == "1. CORPORATE OVERVIEW":
             df_hist = df_v[mask_hist].groupby('Fecha_dt')['Monto'].sum().reset_index()
             fig_main.add_trace(go.Bar(x=df_hist['Fecha_dt'], y=df_hist['Monto'], name='Venta Real', marker_color='#00A3E0'))
             
-            # Línea de Meta en el Gráfico
             fig_main.add_hline(y=pe_diario, line_dash="dot", line_color="green", annotation_text="Meta PE")
 
-        # Forecast (2 días)
         df_f = DATA['forecast']
         if not df_f.empty and 'Venta_P50_Probable' in df_f.columns:
             df_f['yhat'] = pd.to_numeric(df_f['Venta_P50_Probable'], errors='coerce')
@@ -412,7 +387,6 @@ if menu == "1. CORPORATE OVERVIEW":
         fig_main.update_layout(template="plotly_dark", height=400, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig_main, use_container_width=True)
 
-    # Gráfico BCG
     with c_right:
         st.subheader("🧩 Matriz BCG")
         if not df_v.empty and not df_c.empty:
@@ -434,7 +408,6 @@ elif menu == "2. EFICIENCIA & COSTOS":
 
     col_ef1, col_ef2 = st.columns(2)
     
-    # 1. RANKING DE MERMA (004)
     with col_ef1:
         st.subheader("🗑️ Ranking de Pérdidas (Merma)")
         df_m = DATA['merma']
@@ -452,7 +425,6 @@ elif menu == "2. EFICIENCIA & COSTOS":
         else:
             st.info("No hay registros de Merma en el Inventario")
 
-    # 2. CONTROL DE CALIDAD COMPRAS (003)
     with col_ef2:
         st.subheader("🛡️ Compras No Convertibles (Mala Calidad)")
         df_qc = DATA['qc']
@@ -466,7 +438,6 @@ elif menu == "2. EFICIENCIA & COSTOS":
 
     st.markdown("---")
     
-    # 3. GAP FOOD COST (Inventario Teorico vs Real)
     st.subheader("⚖️ Discrepancia de Inventario (Gap Analysis)")
     if not df_m.empty and 'Stock_teorico_gr' in df_m.columns:
         df_gap = df_m.copy()
@@ -480,12 +451,11 @@ elif menu == "2. EFICIENCIA & COSTOS":
         st.info("Cargando datos de comparación de stocks...")
 
 # ==============================================================================
-# PESTAÑA 3: FINANZAS & RUNWAY (INTEGRACION CON COLAB)
+# PESTAÑA 3: FINANZAS & RUNWAY
 # ==============================================================================
 elif menu == "3. FINANZAS & RUNWAY":
     st.header("🔮 Soberanía Financiera & Estructura")
 
-    # --- 1. INICIALIZACIÓN DE VARIABLES (Valores por defecto 0.00) ---
     orden = "ESPERANDO DATOS... (Ejecuta Colab)"
     runway_val = 0.0
     burn_rate = 0.0
@@ -496,7 +466,6 @@ elif menu == "3. FINANZAS & RUNWAY":
     
     df_sob = DATA['soberania']
     
-    # --- 2. SI HAY DATOS, SOBRESCRIBIMOS LOS CEROS ---
     if not df_sob.empty:
         ultimo = df_sob.iloc[-1]
         
@@ -505,7 +474,6 @@ elif menu == "3. FINANZAS & RUNWAY":
         burn_rate = ultimo.get('Burn_Rate_Diario', 0)
         deuda_tc = ultimo.get('Deuda_TC_Auditada', 0)
         
-        # Cálculo de Equilibrio
         try:
             ratio = float(str(ultimo.get('Ratio_Costo_Real', '0.6')).replace('%',''))
             if ratio > 1: ratio /= 100
@@ -515,12 +483,8 @@ elif menu == "3. FINANZAS & RUNWAY":
         pe_diario = burn_rate / margen_contrib if margen_contrib > 0 else 0
         pe_mensual = pe_diario * 30
     else:
-        # Aviso pequeño, no intrusivo
         st.caption("⚠️ Modo Visualización: Ejecuta el script de Colab para poblar estos datos.")
 
-    # --- 3. VISUALIZACIÓN (SE MUESTRA SIEMPRE) ---
-    
-    # A. BLOQUE DE ORDEN
     st.markdown(f"### 📢 ORDEN DEL DÍA")
     if "ALERTA" in str(orden):
         st.markdown(f'<div class="critical-box">🚨 {orden}</div>', unsafe_allow_html=True)
@@ -533,7 +497,6 @@ elif menu == "3. FINANZAS & RUNWAY":
         
     st.markdown("---")
 
-    # B. BLOQUE DE ESTRUCTURA DE COSTOS
     st.subheader("⚖️ Estructura de Costos (Break-even Analysis)")
     c_pe1, c_pe2, c_pe3 = st.columns(3)
     
@@ -547,17 +510,14 @@ elif menu == "3. FINANZAS & RUNWAY":
         
     st.markdown("---")
 
-    # C. BLOQUE DE RUNWAY & DEUDA
     st.subheader("✈️ Evolución de Supervivencia")
     
-    # Lógica del Gráfico (Si está vacío, crea uno ficticio plano)
     if not df_sob.empty:
         fig_run = px.line(df_sob, x='Fecha_dt', y='Runway_Dias', markers=True)
     else:
-        # Gráfico vacío placeholder
         dummy_data = pd.DataFrame({'Fecha_dt': [hoy], 'Runway_Dias': [0]})
         fig_run = px.line(dummy_data, x='Fecha_dt', y='Runway_Dias')
-        fig_run.update_layout(yaxis_range=[0, 60]) # Rango fijo para que se vea bien
+        fig_run.update_layout(yaxis_range=[0, 60])
 
     fig_run.add_hline(y=45, line_dash="dot", line_color="green", annotation_text="Objetivo (45)")
     fig_run.add_hline(y=30, line_dash="dot", line_color="red", annotation_text="Peligro (30)")
@@ -566,7 +526,6 @@ elif menu == "3. FINANZAS & RUNWAY":
 
     st.metric("DEUDA PASIVA (TC)", f"S/ {deuda_tc:,.2f}", "Deuda Corriente a Pagar")
 
-    # D. DEUDAS & CAPEX (Se mantiene igual)
     st.markdown("---")
     c_prov, c_cap = st.columns(2)
     with c_prov:
@@ -585,25 +544,18 @@ elif menu == "3. FINANZAS & RUNWAY":
         else: st.info("🔨 Sin proyectos activos.")
 
 # ==============================================================================
-# PESTAÑA 4: MENU ENGINEERING                       
+# PESTAÑA 4: MENU ENGINEERING                        
 # ==============================================================================
 elif menu == "4. MENU ENGINEERING":
     st.header("🚀 Marketing Science (En Vivo)")
-    
-    # 1. CONEXIÓN SEGURA (Usamos la memoria caché, no el enlace público)
-    # DATA['menu_eng'] ya fue cargado y limpiado en el Bloque 3
     df_menu_eng = DATA['menu_eng']
 
-    # 2. VALIDACIÓN DE DATOS
     if df_menu_eng.empty:
         st.warning("⚠️ No hay datos de Ingeniería de Menú. Revisa la carga en 'MKT_RESULTADOS'.")
-        # No usamos st.stop() para permitir que el usuario vea el resto de la app si quiere
     
     else:
-        # --- GRÁFICOS ---
         st.subheader("🎯 Matriz de Ingeniería de Menú")
         
-        # Validación de columnas críticas antes de graficar
         required_cols = ['Mix_Percent', 'Margen', 'Clasificacion', 'Total_Venta', 'Menu', 'Precio_num']
         if all(col in df_menu_eng.columns for col in required_cols):
             
@@ -616,12 +568,11 @@ elif menu == "4. MENU ENGINEERING":
                 hover_name="Menu",
                 color_discrete_map={
                     "⭐ ESTRELLA": "#00FF00", "🐎 CABALLO BATALLA": "#FFFF00", 
-                    "🧩 PUZZLE": "#00FFFF", "🐶 PERRO": "#FF0000"    
+                    "🧩 PUZZLE": "#00FFFF", "🐶 PERRO": "#FF0000"     
                 },
                 title="Mapa de Rentabilidad vs Popularidad"
             )
             
-            # Líneas de corte dinámicas (Promedios)
             avg_mix = df_menu_eng['Mix_Percent'].mean()
             avg_margen = df_menu_eng['Margen'].mean()
             
@@ -631,11 +582,8 @@ elif menu == "4. MENU ENGINEERING":
             fig_matrix.update_layout(template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', height=550)
             st.plotly_chart(fig_matrix, use_container_width=True)
 
-            # --- TABLA DE ACCIÓN ---
             st.markdown("### ⚡ Plan de Acción")
-            # Mostramos columnas tácticas
             cols_show = ['Menu', 'Clasificacion', 'Accion_Sugerida', 'Precio_num', 'Margen', 'Mix_Percent']
-            # Filtramos solo las columnas que existen
             cols_final = [c for c in cols_show if c in df_menu_eng.columns]
             
             st.dataframe(
@@ -660,49 +608,45 @@ elif menu == "5. CX & TIEMPOS":
     st.header("⏱️ Speed of Service (SOS) & Calidad")
     st.info("Objetivo: Entregar en menos de 15 minutos. (Muestreo Aleatorio)")
 
-    # 1. CONEXIÓN SEGURA (Adiós pd.read_csv)
-    # Usamos la data ya cargada por el robot seguro
     df_cx = DATA['cx_tiempos']
 
-    # 2. VALIDACIÓN DE ESTRUCTURA
     if df_cx.empty:
         st.warning("⚠️ La base de datos de CX está vacía o no se pudo cargar.")
-        # No usamos stop() para no bloquear la app completa
     else:
         try:
-            # --- PROCESAMIENTO DE TIEMPOS (Lógica de Negocio) ---
-            
-            # Verificamos que existan las columnas críticas antes de calcular
+            # --- PROCESAMIENTO DE TIEMPOS (CORREGIDO) ---
             required_cols = ['Fecha', 'Hora_Pedido', 'Hora_Entrega', 'Incidencia', 'ID_Ticket']
             if not all(col in df_cx.columns for col in required_cols):
                 st.error(f"❌ Faltan columnas en tu Excel. Necesitas: {required_cols}")
                 st.stop()
 
-            # Función auxiliar para combinar Fecha + Hora
-            # Nota: Usamos la columna original 'Fecha' (string) porque 'Fecha_dt' ya tiene una hora (00:00)
-            def combinar_fecha_hora(row, col_hora):
-                try:
-                    fecha_str = str(row['Fecha']).split(' ')[0] # Aseguramos solo la fecha
-                    hora_str = str(row[col_hora]).strip()
-                    full_str = f"{fecha_str} {hora_str}"
-                    return pd.to_datetime(full_str, dayfirst=True)
-                except:
-                    return pd.NaT
+            # --- CORRECCIÓN LÓGICA DE TIEMPOS ---
+            # Aseguramos que Fecha sea string puro para concatenar (Formato YYYY-MM-DD)
+            df_cx['Fecha_Str'] = df_cx['Fecha_dt'].dt.strftime('%Y-%m-%d')
+            
+            # Limpiamos las horas
+            df_cx['Hora_Pedido'] = df_cx['Hora_Pedido'].astype(str).str.strip()
+            df_cx['Hora_Entrega'] = df_cx['Hora_Entrega'].astype(str).str.strip()
 
-            df_cx['Inicio_Real'] = df_cx.apply(lambda x: combinar_fecha_hora(x, 'Hora_Pedido'), axis=1)
-            df_cx['Fin_Real'] = df_cx.apply(lambda x: combinar_fecha_hora(x, 'Hora_Entrega'), axis=1)
+            # Concatenación Vectorizada (Mucho más rápida y segura)
+            df_cx['Inicio_Real'] = pd.to_datetime(
+                df_cx['Fecha_Str'] + ' ' + df_cx['Hora_Pedido'], 
+                errors='coerce'
+            )
+            df_cx['Fin_Real'] = pd.to_datetime(
+                df_cx['Fecha_Str'] + ' ' + df_cx['Hora_Entrega'], 
+                errors='coerce'
+            )
 
-            # Cálculo de Minutos (La Resta)
+            # Cálculo de Minutos
             df_cx['Minutos_Espera'] = (df_cx['Fin_Real'] - df_cx['Inicio_Real']).dt.total_seconds() / 60
-
-            # Limpieza de nulos (Errores de tipeo en horas)
             df_validos = df_cx.dropna(subset=['Minutos_Espera']).copy()
             
             if df_validos.empty:
                 st.warning("⚠️ Hay datos, pero las horas no tienen el formato correcto (ej: '13:30').")
                 st.stop()
 
-            # 3. SEMÁFORO DE VELOCIDAD (KPIs)
+            # 3. SEMÁFORO DE VELOCIDAD
             def clasificar_velocidad(minutos):
                 if minutos <= 5: return "🟢 RÁPIDO"
                 elif minutos <= 10: return "🟡 NORMAL"
@@ -711,8 +655,6 @@ elif menu == "5. CX & TIEMPOS":
             df_validos['Status'] = df_validos['Minutos_Espera'].apply(clasificar_velocidad)
 
             # --- DASHBOARD VISUAL ---
-
-            # FILA 1: KPIs MACRO
             promedio_min = df_validos['Minutos_Espera'].mean()
             pct_lentos = (len(df_validos[df_validos['Status'] == "🔴 LENTO"]) / len(df_validos)) * 100
             total_muestras = len(df_validos)
@@ -737,7 +679,6 @@ elif menu == "5. CX & TIEMPOS":
 
             st.markdown("---")
 
-            # FILA 2: GRÁFICOS
             col_graf1, col_graf2 = st.columns(2)
 
             with col_graf1:
@@ -755,7 +696,6 @@ elif menu == "5. CX & TIEMPOS":
 
             with col_graf2:
                 st.subheader("🚨 Incidencias Reportadas")
-                # Filtramos incidencias reales
                 df_incidencias = df_validos[~df_validos['Incidencia'].isin(['Ninguna', 'Todo OK', 'OK', '-', 'ok', 'nan'])]
                 
                 if not df_incidencias.empty:
@@ -769,12 +709,7 @@ elif menu == "5. CX & TIEMPOS":
                 else:
                     st.success("🎉 ¡Increíble! No hay incidencias negativas registradas en la muestra.")
 
-            # FILA 3: TABLA DETALLADA
             st.subheader("🕵️ Auditoría de Tickets (Últimos 10)")
-            # Aseguramos que Fecha_dt exista para ordenar
-            if 'Fecha_dt' not in df_validos.columns:
-                 df_validos['Fecha_dt'] = pd.to_datetime(df_validos['Fecha'], dayfirst=True, errors='coerce')
-
             st.dataframe(
                 df_validos[['ID_Ticket', 'Fecha', 'Hora_Pedido', 'Hora_Entrega', 'Minutos_Espera', 'Status', 'Incidencia']]
                 .sort_values(by='Fecha_dt', ascending=False)
@@ -794,50 +729,35 @@ elif menu == "6. GROWTH & LEALTAD":
     st.header("💎 CRM & Lealtad (Yape Mining)")
     st.info("Estrategia: Análisis financiero de flujos digitales (Yape/Plin).")
 
-    # 1. CONEXIÓN SEGURA (Usamos el túnel encriptado)
     df_yape = DATA['yape']
 
-    # 2. CÁLCULO DE VARA DE MEDIR (Ticket Promedio)
-    # Usamos DATA['ventas'] porque es la fuente oficial
-    ticket_promedio_global = 20.0 # Valor default
+    ticket_promedio_global = 20.0 
     
     if not DATA['ventas'].empty:
         try:
-            # Agrupamos por Ticket para obtener el valor real por mesa
-            # Nota: Asumimos que la columna ID_Ticket existe. Si no, usa el promedio simple.
             if 'ID_Ticket' in DATA['ventas'].columns:
                 df_tickets_ref = DATA['ventas'].groupby('ID_Ticket')['Monto'].sum()
                 ticket_promedio_global = df_tickets_ref.mean()
             else:
                 ticket_promedio_global = DATA['ventas']['Monto'].mean()
         except:
-            pass # Si falla, se queda en 20.0
+            pass
 
     c_kpi1, c_kpi2 = st.columns(2)
     c_kpi1.metric("Ticket Promedio Global (Base)", f"S/ {ticket_promedio_global:.2f}", help="Se usa para definir los umbrales VIP")
 
-    # 3. PROCESAMIENTO DE CLIENTES
     if df_yape.empty:
         st.warning("⚠️ No hay datos de Yape cargados.")
     else:
         try:
             df_ingresos = df_yape.copy()
             
-            # --- LIMPIEZA (ETL ya hizo parte del trabajo, aquí refinamos) ---
-            # El ETL ya renombró a 'Fecha_Operacion', 'Monto', 'Origen' y creó 'Fecha_dt'
-            # Verificamos si falta algo crítico
-            
             if 'Fecha_dt' not in df_ingresos.columns:
-                 # Fallback por si el ETL no procesó fechas
                  df_ingresos['Fecha_dt'] = pd.to_datetime(df_ingresos['Fecha_Operacion'], dayfirst=True, errors='coerce')
 
-            # Eliminamos filas sin fecha
             df_ingresos = df_ingresos.dropna(subset=['Fecha_dt'])
-            
-            # Columna Mes-Año para Cohortes
             df_ingresos['Mes_Año'] = df_ingresos['Fecha_dt'].dt.strftime('%Y-%m') 
 
-            # Limpieza de Nombres (Quitamos "YAPE - ", "PLIN - ")
             def limpiar_nombre(nombre):
                 if not isinstance(nombre, str): return "DESCONOCIDO"
                 nombre = nombre.upper().strip()
@@ -848,9 +768,6 @@ elif menu == "6. GROWTH & LEALTAD":
 
             df_ingresos['Cliente_Limpio'] = df_ingresos['Origen'].apply(limpiar_nombre)
 
-            # ---------------------------------------------------------
-            # 4. LÓGICA DE NEGOCIO: SEGMENTACIÓN
-            # ---------------------------------------------------------
             fecha_hoy = pd.to_datetime("today")
             
             df_clientes = df_ingresos.groupby('Cliente_Limpio').agg(
@@ -862,9 +779,8 @@ elif menu == "6. GROWTH & LEALTAD":
 
             df_clientes['Dias_Ausente'] = (fecha_hoy - df_clientes['Ultima_Visita']).dt.days
 
-            # Umbrales
-            umbral_vip = ticket_promedio_global * 4        # 4x (Ej: S/ 80)
-            umbral_recurrente = ticket_promedio_global * 1.5 # 1.5x (Ej: S/ 30)
+            umbral_vip = ticket_promedio_global * 4        
+            umbral_recurrente = ticket_promedio_global * 1.5
 
             def segmentar_cliente(row):
                 total = row['Total_Historico']
@@ -873,29 +789,21 @@ elif menu == "6. GROWTH & LEALTAD":
                 tk_max = row['Ticket_Maximo']
                 
                 estado = ""
-                # Clasificación
                 if tk_max >= umbral_vip and visitas == 1: estado = "🐋 BALLENA (1 Visita)"
                 elif total >= umbral_vip: estado = "💎 VIP (Socio)"
                 elif total >= umbral_recurrente: estado = "🔥 RECURRENTE"
                 else: estado = "🌱 CASUAL"
                 
-                # Churn (Riesgo de Fuga)
-                if dias_off > 45: # Subí a 45 días para ser menos alarmista
+                if dias_off > 45: 
                     if "CASUAL" in estado: estado = "💤 PERDIDO"
                     else: estado = f"💤 DORMIDO ({estado.split('(')[0].strip()})" 
                 return estado
 
             df_clientes['Segmento'] = df_clientes.apply(segmentar_cliente, axis=1)
 
-            # KPI Cartera
             total_vip = len(df_clientes[df_clientes['Segmento'].str.contains("VIP")])
             c_kpi2.metric("Socios VIP Activos", total_vip, "Clientes fidelizados de alto valor")
 
-            # ---------------------------------------------------------
-            # 5. VISUALIZACIÓN
-            # ---------------------------------------------------------
-            
-            # TABLA DE COHORTES (Matriz de Retención Simplificada)
             meses_disponibles = sorted(df_ingresos['Mes_Año'].unique())[-6:] 
             
             if meses_disponibles:
@@ -909,7 +817,6 @@ elif menu == "6. GROWTH & LEALTAD":
                 
                 st.divider()
                 
-                # Filtros
                 col_search, col_filtro = st.columns([2, 1])
                 with col_search:
                     busqueda = st.text_input("🔍 Buscar Cliente:", placeholder="Escribe nombre...")
@@ -917,16 +824,14 @@ elif menu == "6. GROWTH & LEALTAD":
                     opciones_seg = ["TODOS"] + sorted(df_final['Segmento'].unique().tolist())
                     filtro_seg = st.selectbox("Filtrar Segmento:", opciones_seg)
 
-                # Filtrado
                 df_display = df_final.copy()
                 if busqueda:
                     df_display = df_display[df_display['Cliente_Limpio'].str.contains(busqueda.upper())]
                 if filtro_seg != "TODOS":
                     df_display = df_display[df_display['Segmento'] == filtro_seg]
 
-                # Render Tabla
                 if not busqueda and filtro_seg == "TODOS":
-                     df_display = df_display.head(50) # Top 50 por defecto
+                      df_display = df_display.head(50) 
                 
                 cols_meses_reales = [c for c in df_display.columns if c in meses_disponibles]
                 cols_totales = ['Cliente_Limpio', 'Segmento', 'Total_Historico', 'Dias_Ausente'] + cols_meses_reales
@@ -942,7 +847,6 @@ elif menu == "6. GROWTH & LEALTAD":
                     hide_index=True
                 )
 
-                # ALERTAS TÁCTICAS
                 st.divider()
                 c_alert1, c_alert2 = st.columns(2)
                 
@@ -966,18 +870,16 @@ elif menu == "6. GROWTH & LEALTAD":
             st.error(f"❌ Error en Procesamiento Yape: {e}")
 
 # ==============================================================================
-# PESTAÑA 7: GESTIÓN DE MARCA (VERSIÓN CORREGIDA)
+# PESTAÑA 7: GESTIÓN DE MARCA
 # ==============================================================================
 elif menu == "7. GESTION DE MARCA":
     st.header("📢 Gestión de Marca (MER)")
     st.info("Objetivo: Abrir la 'Mandíbula de Cocodrilo'. Gasto estable, Ventas crecientes.")
 
-    # 1. VERIFICACIÓN DE DEPENDENCIAS
     if 'df_ventas' not in locals() and DATA['ventas'].empty:
          st.warning("⚠️ No se detectaron Ventas cargadas. Ve a 'Finanzas' primero.")
          st.stop()
     
-    # 2. CONEXIÓN SEGURA
     df_mkt = DATA['mkt_semanal']
 
     if df_mkt.empty:
@@ -991,10 +893,8 @@ elif menu == "7. GESTION DE MARCA":
         """)
     else:
         try:
-            # --- PROCESAMIENTO ---
             df_proc = df_mkt.copy()
             
-            # Limpieza de Fecha (Buscamos tu nombre exacto: Fecha_Cierre)
             if 'Fecha_Cierre' not in df_proc.columns:
                  st.error(f"❌ No encuentro la columna 'Fecha_Cierre'. Veo estas: {df_proc.columns.tolist()}")
                  st.stop()
@@ -1002,7 +902,6 @@ elif menu == "7. GESTION DE MARCA":
             df_proc['Fecha_Cierre'] = pd.to_datetime(df_proc['Fecha_Cierre'], dayfirst=True, errors='coerce')
             df_proc = df_proc.dropna(subset=['Fecha_Cierre']).sort_values(by='Fecha_Cierre')
 
-            # Cruzamos con Ventas
             reporte_final = []
             df_v = DATA['ventas']
             
@@ -1016,8 +915,6 @@ elif menu == "7. GESTION DE MARCA":
                 gasto = row.get('Gasto_Ads', 0)
                 mer = venta_semanal / gasto if gasto > 0 else 0
                 
-                # CORRECCIÓN DE NOMBRES (Singular vs Plural)
-                # Buscamos 'Google_Review' (Tu nombre) o 'Google_Reviews' (Estándar)
                 reviews = row.get('Google_Review') if 'Google_Review' in row else row.get('Google_Reviews', 0)
                 
                 fila_procesada = {
@@ -1033,18 +930,13 @@ elif menu == "7. GESTION DE MARCA":
                 
             df_final = pd.DataFrame(reporte_final)
             
-            # Cálculos de Variación
             if not df_final.empty:
                  df_final['Nuevas_Reviews'] = df_final['Reviews'].diff().fillna(0)
 
-            # ---------------------------------------------------------
-            # 4. DASHBOARD VISUAL
-            # ---------------------------------------------------------
             if not df_final.empty:
                 actual = df_final.iloc[-1]
                 anterior = df_final.iloc[-2] if len(df_final) > 1 else actual
                 
-                # --- KPI SECTION ---
                 k1, k2, k3 = st.columns(3)
                 
                 delta_mer = actual['MER'] - anterior['MER']
@@ -1057,7 +949,6 @@ elif menu == "7. GESTION DE MARCA":
                 
                 st.markdown("---")
                 
-                # --- GRÁFICO ---
                 st.subheader("🐊 La Mandíbula de Cocodrilo (Inversión vs Ventas)")
                 
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -1080,9 +971,6 @@ elif menu == "7. GESTION DE MARCA":
         except Exception as e:
             st.error(f"❌ Error de Lógica: {e}")
             st.dataframe(pd.DataFrame(reporte_final))
-            
-        except Exception as e:
-            st.error(f"❌ Error en el procesamiento lógico: {e}")
 
 # ==============================================================================
 # PESTAÑA 8: MODELO ECONOMÉTRICO (EL ORÁCULO)
@@ -1091,30 +979,25 @@ elif menu == "8. MODELO ECONOMÉTRICO":
     st.header("🧠 Intelligence Hub: Causa & Efecto")
     st.info("Este módulo analiza qué variables mueven realmente la aguja de tus ventas.")
 
-    # 1. Generar la Tabla Maestra (Usando TODA la historia)
     df_master = build_econometric_master(DATA)
 
     if df_master.empty:
         st.warning("⚠️ No hay suficientes datos para generar el modelo econométrico.")
     else:
-        # 2. Aplicar Filtro de Tiempo (SOLO PARA VISUALIZACIÓN)
         mask_time = (df_master['Fecha_dt'].dt.date >= start_date.date()) & (df_master['Fecha_dt'].dt.date <= hoy.date())
         df_plot = df_master[mask_time].copy()
 
         if df_plot.empty:
             st.warning(f"No hay datos en el periodo seleccionado ({periodo_label}).")
         else:
-            # --- SECCIÓN A: DINÁMICA DE PRECIOS (ELASTICIDAD) ---
             st.subheader("1. La Ley de la Demanda (Precio vs Ventas)")
             
             fig_price = make_subplots(specs=[[{"secondary_y": True}]])
             
-            # Barras: Cantidad Vendida (Q)
             fig_price.add_trace(
                 go.Bar(x=df_plot['Fecha_dt'], y=df_plot['Cantidad'], name="Platos Vendidos (Q)", marker_color='#00A3E0', opacity=0.7),
                 secondary_y=False
             )
-            # Línea: Precio Real (P)
             fig_price.add_trace(
                 go.Scatter(x=df_plot['Fecha_dt'], y=df_plot['Precio_Promedio_Real'], name="Precio Efectivo (S/)", 
                            mode='lines+markers', line=dict(color='#FF4B4B', width=3, dash='dot')),
@@ -1126,18 +1009,15 @@ elif menu == "8. MODELO ECONOMÉTRICO":
             fig_price.update_yaxes(title_text="Precio Promedio (S/)", secondary_y=True)
             st.plotly_chart(fig_price, use_container_width=True)
 
-            # --- SECCIÓN B: ROI DE MARKETING ---
             st.subheader("2. Impacto Publicitario (Ads vs Tráfico)")
             
             fig_ads = make_subplots(specs=[[{"secondary_y": True}]])
             
-            # Área: Ventas Totales
             fig_ads.add_trace(
                 go.Scatter(x=df_plot['Fecha_dt'], y=df_plot['Monto'], name="Venta Total (S/)", 
                            fill='tozeroy', mode='none', fillcolor='rgba(0, 204, 150, 0.2)'),
                 secondary_y=False
             )
-            # Barras: Gasto Ads
             fig_ads.add_trace(
                 go.Bar(x=df_plot['Fecha_dt'], y=df_plot['Gasto_Ads_Soles'], name="Inversión Ads (S/)", marker_color='#FFA500'),
                 secondary_y=True
@@ -1148,16 +1028,11 @@ elif menu == "8. MODELO ECONOMÉTRICO":
             fig_ads.update_yaxes(title_text="Gasto Diario (S/)", secondary_y=True)
             st.plotly_chart(fig_ads, use_container_width=True)
 
-            # --- SECCIÓN C: FACTORES EXTERNOS (SHOCKS) ---
             st.subheader("3. El Entorno (Clima, Competencia, Stockouts)")
             
-            # Crear gráfico base de ventas
             fig_env = px.line(df_plot, x='Fecha_dt', y='Cantidad', title="Impacto de Variables Externas")
             fig_env.update_traces(line_color='gray', opacity=0.5)
 
-            # Agregar marcadores para eventos específicos (Si existen las columnas)
-            
-            # 1. Lluvia
             if 'Lluvia_Intensa' in df_plot.columns and df_plot['Lluvia_Intensa'].sum() > 0:
                 df_rain = df_plot[df_plot['Lluvia_Intensa'] == 1]
                 fig_env.add_trace(go.Scatter(
@@ -1166,7 +1041,6 @@ elif menu == "8. MODELO ECONOMÉTRICO":
                     marker=dict(color='blue', size=12, symbol='triangle-down')
                 ))
 
-            # 2. Competencia
             if 'Competencia_Agresiva' in df_plot.columns and df_plot['Competencia_Agresiva'].sum() > 0:
                 df_comp = df_plot[df_plot['Competencia_Agresiva'] == 1]
                 fig_env.add_trace(go.Scatter(
@@ -1175,7 +1049,6 @@ elif menu == "8. MODELO ECONOMÉTRICO":
                     marker=dict(color='red', size=12, symbol='x')
                 ))
 
-            # 3. Stockouts (¡Importante!)
             if 'Stockout_Cierre' in df_plot.columns and df_plot['Stockout_Cierre'].sum() > 0:
                 df_stock = df_plot[df_plot['Stockout_Cierre'] == 1]
                 fig_env.add_trace(go.Scatter(
@@ -1187,6 +1060,5 @@ elif menu == "8. MODELO ECONOMÉTRICO":
             fig_env.update_layout(template="plotly_dark", height=450, paper_bgcolor='rgba(0,0,0,0)')
             st.plotly_chart(fig_env, use_container_width=True)
             
-            # --- TABLA DE DATOS MAESTRA ---
             with st.expander("🔎 Ver Data Maestra (Auditable)"):
                 st.dataframe(df_plot, use_container_width=True)
