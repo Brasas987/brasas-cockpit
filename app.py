@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from plotly.subplots import make_subplots  # <--- CORRECCIÓN 2: FALTABA ESTO
+from plotly.subplots import make_subplots
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
@@ -168,14 +168,14 @@ def load_all_data():
     if not DB['costos'].empty and 'Margen_%' in DB['costos'].columns:
         DB['costos']['Margen_Pct'] = pd.to_numeric(DB['costos']['Margen_%'].apply(clean_currency), errors='coerce').fillna(0)
 
-    # Menu Engineering (NUEVO)
+    # Menu Engineering
     if not DB['menu_eng'].empty:
         cols_eng = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num']
         for c in cols_eng:
             if c in DB['menu_eng'].columns:
                 DB['menu_eng'][c] = pd.to_numeric(DB['menu_eng'][c].apply(clean_currency), errors='coerce').fillna(0)
 
-    # Yape (NUEVO)
+    # Yape
     if not DB['yape'].empty:
          # Estandarización de nombres
         mapa_cols = {'monto': 'Monto', 'origen': 'Origen', 'fecha': 'Fecha_Operacion'}
@@ -183,7 +183,7 @@ def load_all_data():
         if 'Monto' in DB['yape'].columns:
             DB['yape']['Monto'] = pd.to_numeric(DB['yape']['Monto'].apply(clean_currency), errors='coerce').fillna(0)
 
-    # Marketing Semanal (NUEVO)
+    # Marketing Semanal
     if not DB['mkt_semanal'].empty and 'Gasto_Ads' in DB['mkt_semanal'].columns:
         DB['mkt_semanal']['Gasto_Ads'] = pd.to_numeric(DB['mkt_semanal']['Gasto_Ads'].apply(clean_currency), errors='coerce').fillna(0)
 
@@ -200,7 +200,7 @@ def build_econometric_master(db_data):
     """
     # 1. Extraer Dataframes
     df_v = db_data.get('ventas', pd.DataFrame()).copy()
-    df_ctx = db_data.get('diaria', pd.DataFrame()).copy() # Asegúrate de cargar 'Data_Diaria' en load_all_data como 'diaria'
+    df_ctx = db_data.get('diaria', pd.DataFrame()).copy() 
     df_ads = db_data.get('mkt_semanal', pd.DataFrame()).copy()
 
     if df_v.empty: return pd.DataFrame()
