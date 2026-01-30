@@ -95,53 +95,65 @@ except Exception as e:
 # ==============================================================================
 # 3. MOTOR DE EXTRACCIÓN Y LIMPIEZA DE DATOS (ETL SEGURO)
 # ==============================================================================
+import time # IMPORTANTE: Esto permite pausar al robot
+
 @st.cache_data(ttl=600)
 def load_all_data():
     client = connect_google_sheets()
     DB = {}
     
     def safe_read(file_key, sheet_name):
+        # 1. PAUSA TÁCTICA: Frenamos al robot 2 segundos para no enfadar a Google (Evita Error 429)
+        time.sleep(2) 
+        
         try:
             sheet_id = IDS.get(file_key)
-            if not sheet_id: 
-                st.error(f"❌ ID no encontrado para {file_key}")
-                return pd.DataFrame()
+            if not sheet_id: return pd.DataFrame()
             
-            # Intentamos abrir
             sh = client.open_by_key(sheet_id)
             ws = sh.worksheet(sheet_name)
-            raw_data = ws.get_all_records()
-            return pd.DataFrame(raw_data)
+            
+            # 2. MÉTODO ROBUSTO: Traemos todo como texto crudo para evitar errores de cabeceras
+            raw_data = ws.get_all_values()
+            
+            # Si está vacío, devolvemos DataFrame vacío
+            if not raw_data: return pd.DataFrame()
+
+            # Convertimos la primera fila en cabeceras y el resto en datos
+            headers = raw_data[0]
+            rows = raw_data[1:]
+            
+            # Creamos el DataFrame
+            df = pd.DataFrame(rows, columns=headers)
+            return df
+            
         except Exception as e:
-            # --- MODO FORENSE ACTIVADO ---
-            st.error(f"💥 ERROR EN '{sheet_name}':")
-            # Esto imprimirá el error técnico real (JSON de Google, Error 403, 500, etc)
-            st.code(traceback.format_exc()) 
+            # Si falla, avisamos pero no rompemos la app (aunque saldrá vacío)
+            print(f"⚠️ Error recuperable en '{sheet_name}': {e}")
+            st.warning(f"⚠️ No se pudo cargar: {sheet_name}. Revisa si hay columnas repetidas en el Excel.")
             return pd.DataFrame()
 
-    # --- CARGA DE DATOS (Mismo bloque de antes) ---
-    DB['ventas'] = safe_read("REGISTROS", "BD_Ventas")
-    # ... (copia aquí el resto de tus líneas de carga DB['...'] = safe_read(...) )
-    # ... asegúrate de copiar todas las líneas de carga que tenías antes
-    DB['feriados'] = safe_read("REGISTROS", "MASTER_FERIADOS")
-    DB['partidos'] = safe_read("REGISTROS", "MASTER_PARTIDOS")
-    DB['costos'] = safe_read("COSTOS", "OUT_Costos_Productos")
-    DB['qc'] = safe_read("COSTOS", "OUT_QC_Compras_NoConvertibles")
-    DB['merma'] = safe_read("INVENTARIO", "OUT_Merma_Valorizada")
-    DB['caja'] = safe_read("CAJA", "BD_Caja_Diaria")
-    DB['capex'] = safe_read("CAJA", "PARAM_PROYECTOS_CAPEX")
-    DB['forecast'] = safe_read("FORECAST", "OUT_Pronostico_Ventas")
-    DB['soberania'] = safe_read("FORECAST", "OUT_Soberania_Financiera") 
-    DB['deuda'] = safe_read("LIBROS", "Libro_Cuentas_Pagar")
-    DB['menu_eng'] = safe_read("MKT_RESULTADOS", "OUT_Menu_Engineering")
-    DB['cx_tiempos'] = safe_read("MKT_RESULTADOS", "BD_CX_Tiempos") 
-    DB['yape'] = safe_read("MKT_RESULTADOS", "Data_Clientes_Yape")
-    DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal")
-    DB['diaria'] = safe_read("REGISTROS", "Data_Diaria")
+    # --- CARGA DE DATOS (Con pausas automáticas) ---
+    # El orden no importa, el sleep(2) protege cada llamada
+    with st.spinner('Conectando con la Matriz de Datos... (Esto toma unos segundos)'):
+        DB['ventas'] = safe_read("REGISTROS", "BD_Ventas")
+        DB['feriados'] = safe_read("REGISTROS", "MASTER_FERIADOS")
+        DB['partidos'] = safe_read("REGISTROS", "MASTER_PARTIDOS")
+        DB['costos'] = safe_read("COSTOS", "OUT_Costos_Productos")
+        DB['qc'] = safe_read("COSTOS", "OUT_QC_Compras_NoConvertibles")
+        DB['merma'] = safe_read("INVENTARIO", "OUT_Merma_Valorizada")
+        DB['caja'] = safe_read("CAJA", "BD_Caja_Diaria")
+        DB['capex'] = safe_read("CAJA", "PARAM_PROYECTOS_CAPEX")
+        DB['forecast'] = safe_read("FORECAST", "OUT_Pronostico_Ventas")
+        DB['soberania'] = safe_read("FORECAST", "OUT_Soberania_Financiera") 
+        DB['deuda'] = safe_read("LIBROS", "Libro_Cuentas_Pagar")
+        DB['menu_eng'] = safe_read("MKT_RESULTADOS", "OUT_Menu_Engineering")
+        DB['cx_tiempos'] = safe_read("MKT_RESULTADOS", "BD_CX_Tiempos") 
+        DB['yape'] = safe_read("MKT_RESULTADOS", "Data_Clientes_Yape")
+        DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal")
+        DB['diaria'] = safe_read("REGISTROS", "Data_Diaria")
 
-    # ... (Mismo bloque de limpieza de fechas y números de antes) ...
-    # (Pega aquí el resto de la función load_all_data tal cual la tenías)
-    # --- LIMPIEZA DE FECHAS (GLOBAL CORREGIDA) ---
+    # --- LIMPIEZA DE FECHAS ---
     for key in DB:
         if not DB[key].empty:
             date_cols = ['Fecha', 'Fecha_dt', 'ds', 'Marca temporal', 'Fecha_Vencimiento', 
@@ -156,11 +168,13 @@ def load_all_data():
                     DB[key] = DB[key].dropna(subset=['Fecha_dt'])
                     break
 
+    # --- LIMPIEZA DE NÚMEROS ---
     def clean_currency(x):
         if isinstance(x, str):
             return x.replace('S/', '').replace(',', '').replace('%', '').strip()
         return x
 
+    # Aplicamos limpieza numérica
     if not DB['ventas'].empty and 'Total_Venta' in DB['ventas'].columns:
         DB['ventas']['Monto'] = pd.to_numeric(DB['ventas']['Total_Venta'].apply(clean_currency), errors='coerce').fillna(0)
     
@@ -177,6 +191,7 @@ def load_all_data():
                 DB['menu_eng'][c] = pd.to_numeric(DB['menu_eng'][c].apply(clean_currency), errors='coerce').fillna(0)
 
     if not DB['yape'].empty:
+        # Renombramos primero para evitar errores de clave
         mapa_cols = {'monto': 'Monto', 'origen': 'Origen', 'fecha': 'Fecha_Operacion'}
         DB['yape'].rename(columns=mapa_cols, inplace=True)
         if 'Monto' in DB['yape'].columns:
