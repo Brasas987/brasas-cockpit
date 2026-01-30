@@ -7,6 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import numpy as np
+import traceback
 
 # ==============================================================================
 # 1. CONFIGURACIÓN DEL SISTEMA Y ESTILO (PALANTIR DARK MODE)
@@ -99,25 +100,29 @@ def load_all_data():
     client = connect_google_sheets()
     DB = {}
     
-    # --- AQUÍ ESTÁ EL CAMBIO PARA VER EL ERROR REAL ---
     def safe_read(file_key, sheet_name):
         try:
             sheet_id = IDS.get(file_key)
             if not sheet_id: 
-                st.error(f"❌ ID no encontrado en secrets.toml para: {file_key}")
+                st.error(f"❌ ID no encontrado para {file_key}")
                 return pd.DataFrame()
             
+            # Intentamos abrir
             sh = client.open_by_key(sheet_id)
             ws = sh.worksheet(sheet_name)
             raw_data = ws.get_all_records()
             return pd.DataFrame(raw_data)
         except Exception as e:
-            # ESTO ES LO QUE TE DIRÁ LA VERDAD:
-            st.error(f"💥 ERROR CRÍTICO leyendo '{sheet_name}' (Clave: {file_key}): {e}")
+            # --- MODO FORENSE ACTIVADO ---
+            st.error(f"💥 ERROR EN '{sheet_name}':")
+            # Esto imprimirá el error técnico real (JSON de Google, Error 403, 500, etc)
+            st.code(traceback.format_exc()) 
             return pd.DataFrame()
 
-    # --- CARGA DE DATOS CORE ---
+    # --- CARGA DE DATOS (Mismo bloque de antes) ---
     DB['ventas'] = safe_read("REGISTROS", "BD_Ventas")
+    # ... (copia aquí el resto de tus líneas de carga DB['...'] = safe_read(...) )
+    # ... asegúrate de copiar todas las líneas de carga que tenías antes
     DB['feriados'] = safe_read("REGISTROS", "MASTER_FERIADOS")
     DB['partidos'] = safe_read("REGISTROS", "MASTER_PARTIDOS")
     DB['costos'] = safe_read("COSTOS", "OUT_Costos_Productos")
@@ -134,6 +139,8 @@ def load_all_data():
     DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal")
     DB['diaria'] = safe_read("REGISTROS", "Data_Diaria")
 
+    # ... (Mismo bloque de limpieza de fechas y números de antes) ...
+    # (Pega aquí el resto de la función load_all_data tal cual la tenías)
     # --- LIMPIEZA DE FECHAS (GLOBAL CORREGIDA) ---
     for key in DB:
         if not DB[key].empty:
@@ -149,39 +156,32 @@ def load_all_data():
                     DB[key] = DB[key].dropna(subset=['Fecha_dt'])
                     break
 
-    # --- LIMPIEZA DE NÚMEROS (GLOBAL) ---
     def clean_currency(x):
         if isinstance(x, str):
             return x.replace('S/', '').replace(',', '').replace('%', '').strip()
         return x
 
-    # Ventas
     if not DB['ventas'].empty and 'Total_Venta' in DB['ventas'].columns:
         DB['ventas']['Monto'] = pd.to_numeric(DB['ventas']['Total_Venta'].apply(clean_currency), errors='coerce').fillna(0)
     
-    # Merma
     if not DB['merma'].empty and 'Merma_Soles' in DB['merma'].columns:
         DB['merma']['Monto_Merma'] = pd.to_numeric(DB['merma']['Merma_Soles'].apply(clean_currency), errors='coerce').fillna(0)
         
-    # Costos
     if not DB['costos'].empty and 'Margen_%' in DB['costos'].columns:
         DB['costos']['Margen_Pct'] = pd.to_numeric(DB['costos']['Margen_%'].apply(clean_currency), errors='coerce').fillna(0)
 
-    # Menu Engineering
     if not DB['menu_eng'].empty:
         cols_eng = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num']
         for c in cols_eng:
             if c in DB['menu_eng'].columns:
                 DB['menu_eng'][c] = pd.to_numeric(DB['menu_eng'][c].apply(clean_currency), errors='coerce').fillna(0)
 
-    # Yape
     if not DB['yape'].empty:
         mapa_cols = {'monto': 'Monto', 'origen': 'Origen', 'fecha': 'Fecha_Operacion'}
         DB['yape'].rename(columns=mapa_cols, inplace=True)
         if 'Monto' in DB['yape'].columns:
             DB['yape']['Monto'] = pd.to_numeric(DB['yape']['Monto'].apply(clean_currency), errors='coerce').fillna(0)
 
-    # Marketing Semanal
     if not DB['mkt_semanal'].empty and 'Gasto_Ads' in DB['mkt_semanal'].columns:
         DB['mkt_semanal']['Gasto_Ads'] = pd.to_numeric(DB['mkt_semanal']['Gasto_Ads'].apply(clean_currency), errors='coerce').fillna(0)
 
