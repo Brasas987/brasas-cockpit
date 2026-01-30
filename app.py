@@ -1062,3 +1062,42 @@ elif menu == "8. MODELO ECONOMÉTRICO":
             
             with st.expander("🔎 Ver Data Maestra (Auditable)"):
                 st.dataframe(df_plot, use_container_width=True)
+
+#====================================================================================
+# ==============================================================================
+# BLOQUE DE DIAGNÓSTICO (PEGAR AL FINAL DEL SCRIPT)
+# ==============================================================================
+with st.sidebar:
+    st.markdown("---")
+    st.header("🕵️ MOD DE DIAGNÓSTICO")
+    
+    # 1. Chequeo de Fecha del Sistema
+    st.write(f"**Fecha del Sistema (Python):** {hoy.strftime('%Y-%m-%d')}")
+    
+    # 2. Chequeo de Datos Crudos
+    if not DATA['ventas'].empty:
+        df_debug = DATA['ventas']
+        st.write(f"**Filas Cargadas:** {len(df_debug)}")
+        
+        # Chequeo de columnas
+        st.write("**Columnas Detectadas:**")
+        st.code(list(df_debug.columns))
+        
+        # Chequeo de Fechas en el Excel
+        if 'Fecha_dt' in df_debug.columns:
+            min_date = df_debug['Fecha_dt'].min()
+            max_date = df_debug['Fecha_dt'].max()
+            st.info(f"📅 Tu Excel va desde:\n{min_date} \nhasta: \n{max_date}")
+            
+            # Verificación de Filtro
+            mask_debug = (df_debug['Fecha_dt'].dt.date >= start_date.date()) & (df_debug['Fecha_dt'].dt.date <= hoy.date())
+            rows_filtered = df_debug[mask_debug].shape[0]
+            
+            if rows_filtered == 0:
+                st.error(f"🚨 EL FILTRO BORRA TODO.\nEstás buscando desde {start_date.date()} hasta {hoy.date()}.\nPero tus datos terminan en {max_date.date()}.")
+            else:
+                st.success(f"✅ El filtro encuentra {rows_filtered} filas.")
+        else:
+            st.error("❌ La columna 'Fecha_dt' NO se creó. Falló la limpieza de fechas.")
+    else:
+        st.error("❌ La tabla 'ventas' está completamente vacía. Revisa la conexión a Google Sheets.")
