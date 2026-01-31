@@ -93,29 +93,33 @@ except Exception as e:
     st.stop()
 
 # ==============================================================================
-# 3. MOTOR DE EXTRACCIÓN Y LIMPIEZA DE DATOS (ETL SEGURO & CORREGIDO)
+# 3. MOTOR DE EXTRACCIÓN Y LIMPIEZA DE DATOS (ETL SEGURO)
 # ==============================================================================
 @st.cache_data(ttl=600)
 def load_all_data():
     client = connect_google_sheets()
     DB = {}
     
-    # 1. Función de Lectura Segura
+    # 1. Función de Lectura Segura (Anti-Bloqueos de Google)
     def safe_read(file_key, sheet_name):
-        time.sleep(1.5) 
+        time.sleep(1.5) # Pausa técnica para evitar error 429
         try:
             sheet_id = IDS.get(file_key)
             if not sheet_id: return pd.DataFrame()
             
             sh = client.open_by_key(sheet_id)
             ws = sh.worksheet(sheet_name)
+            
+            # Leemos TODO como texto para evitar errores de cabecera
             raw_data = ws.get_all_values()
             
             if not raw_data: return pd.DataFrame()
 
+            # Convertimos a DataFrame usando la primera fila como cabecera
             headers = raw_data[0]
             rows = raw_data[1:]
             
+            # Si hay filas vacías al final, las limpiamos
             if not rows: return pd.DataFrame(columns=headers)
             
             df = pd.DataFrame(rows, columns=headers)
@@ -125,7 +129,7 @@ def load_all_data():
             print(f"⚠️ Error recuperable en '{sheet_name}': {e}")
             return pd.DataFrame()
 
-    # 2. Carga Masiva
+    # 2. Carga Masiva (El Robot Trabajando)
     with st.spinner('Procesando datos del negocio...'):
         DB['ventas'] = safe_read("REGISTROS", "BD_Ventas")
         DB['feriados'] = safe_read("REGISTROS", "MASTER_FERIADOS")
@@ -135,6 +139,10 @@ def load_all_data():
         DB['merma'] = safe_read("INVENTARIO", "OUT_Merma_Valorizada")
         DB['caja'] = safe_read("CAJA", "BD_Caja_Diaria")
         DB['capex'] = safe_read("CAJA", "PARAM_PROYECTOS_CAPEX")
+        
+        # ### NUEVO: Agregamos la lectura de Costos Fijos Dinámicos ###
+        DB['fijos'] = safe_read("CAJA", "PARAM_COSTOS_FIJOS") 
+        
         DB['forecast'] = safe_read("FORECAST", "OUT_Pronostico_Ventas")
         DB['soberania'] = safe_read("FORECAST", "OUT_Soberania_Financiera") 
         DB['deuda'] = safe_read("LIBROS", "Libro_Cuentas_Pagar")
@@ -144,7 +152,7 @@ def load_all_data():
         DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal")
         DB['diaria'] = safe_read("REGISTROS", "Data_Diaria")
 
-    # 3. LIMPIEZA DE FECHAS
+    # 3. LIMPIEZA DE FECHAS (Universal)
     for key in DB:
         if not DB[key].empty:
             date_cols = ['Fecha', 'Fecha_dt', 'ds', 'Marca temporal', 'Fecha_Vencimiento', 
@@ -175,30 +183,22 @@ def load_all_data():
             DB['ventas']['Monto'] = DB['ventas'][col_found].apply(clean_currency)
         else:
             DB['ventas']['Monto'] = 0.0
-            
         if 'Cantidad' in DB['ventas'].columns:
              DB['ventas']['Cantidad'] = pd.to_numeric(DB['ventas']['Cantidad'], errors='coerce').fillna(0)
 
-    # B. Limpieza Costos (AQUÍ ESTABA EL ERROR DEL GRÁFICO BCG)
+    # B. Limpieza Costos
     if not DB['costos'].empty:
-        # 1. Limpieza Margen
         cols_margen = ['Margen_%', 'Margen %', 'Margen_Pct', 'Margen', 'margen']
         col_found = next((c for c in cols_margen if c in DB['costos'].columns), None)
         if col_found:
             DB['costos']['Margen_Pct'] = DB['costos'][col_found].apply(clean_currency)
         else:
             DB['costos']['Margen_Pct'] = 0.0
-            
-        # 2. Limpieza Precio (ESTO FALTABA)
-        # Buscamos cualquier columna que parezca precio
         cols_precio = ['Precio_num', 'Precio', 'Precio_Venta', 'PVP', 'Precio Carta']
         col_p_found = next((c for c in cols_precio if c in DB['costos'].columns), None)
-        
         if col_p_found:
-            # Creamos la columna estandarizada 'Precio_num' para que el gráfico la encuentre
             DB['costos']['Precio_num'] = DB['costos'][col_p_found].apply(clean_currency)
         else:
-            # Si no hay precio, ponemos un tamaño por defecto para que no falle el gráfico
             DB['costos']['Precio_num'] = 10.0
 
     # C. Limpieza Merma
@@ -222,6 +222,10 @@ def load_all_data():
     # F. Limpieza Marketing
     if not DB['mkt_semanal'].empty and 'Gasto_Ads' in DB['mkt_semanal'].columns:
         DB['mkt_semanal']['Gasto_Ads'] = DB['mkt_semanal']['Gasto_Ads'].apply(clean_currency)
+
+    # ### NUEVO: Limpieza de Costos Fijos para poder sumarlos ###
+    if not DB['fijos'].empty and 'Monto_Mensual' in DB['fijos'].columns:
+        DB['fijos']['Monto_Mensual'] = DB['fijos']['Monto_Mensual'].apply(clean_currency)
 
     return DB
 
@@ -508,27 +512,39 @@ elif menu == "2. EFICIENCIA & COSTOS":
         st.info("Cargando datos de comparación de stocks...")
 
 # ==============================================================================
-# PESTAÑA 3: FINANZAS & RUNWAY
+# PESTAÑA 3: FINANZAS & RUNWAY (ACTUALIZADO DINÁMICO)
 # ==============================================================================
 elif menu == "3. FINANZAS & RUNWAY":
     st.header("🔮 Soberanía Financiera & Estructura")
 
+    # Inicialización
     orden = "ESPERANDO DATOS... (Ejecuta Colab)"
     runway_val = 0.0
-    burn_rate = 0.0
+    burn_operativo = 0.0
     deuda_tc = 0.0
     pe_diario = 0.0
     pe_mensual = 0.0
     margen_contrib = 0.0
+    costo_fijo_mensual_real = 0.0
     
     df_sob = DATA['soberania']
+    df_fijos = DATA['fijos'] # ### NUEVO: Usamos la tabla de fijos ###
     
+    # 1. CÁLCULO DE COSTOS FIJOS REALES (DINÁMICO)
+    # ### NUEVO: Sumamos directamente del Excel ###
+    if not df_fijos.empty and 'Monto_Mensual' in df_fijos.columns:
+        costo_fijo_mensual_real = df_fijos['Monto_Mensual'].sum()
+    else:
+        # Fallback de seguridad si falla la hoja
+        costo_fijo_mensual_real = 3600.00 
+
+    # 2. CÁLCULO DE MÉTRICAS FINANCIERAS
     if not df_sob.empty:
         ultimo = df_sob.iloc[-1]
         
         orden = ultimo.get('ORDEN_TESORERIA', 'SIN DATOS')
-        runway_val = safe_float(ultimo.get('Runway_Dias', 0))
-        burn_rate = safe_float(ultimo.get('Burn_Rate_Diario', 0))
+        kpi_runway = safe_float(ultimo.get('Runway_Dias', 0))
+        burn_operativo = safe_float(ultimo.get('Burn_Rate_Diario', 0)) # Fijos + Variable (Caja)
         deuda_tc = safe_float(ultimo.get('Deuda_TC_Auditada', 0))
         
         raw_ratio = ultimo.get('Ratio_Costo_Real', '0.6')
@@ -537,11 +553,18 @@ elif menu == "3. FINANZAS & RUNWAY":
         if ratio_val == 0: ratio_val = 0.60
         
         margen_contrib = 1 - ratio_val
-        pe_diario = burn_rate / margen_contrib if margen_contrib > 0 else 0
-        pe_mensual = pe_diario * 30
+        
+        # PE = Costo Fijo Puro / Margen
+        if margen_contrib > 0.05:
+            pe_mensual = costo_fijo_mensual_real / margen_contrib
+            pe_diario = pe_mensual / 30
+        else:
+            pe_mensual = 0
+            pe_diario = 0
     else:
         st.caption("⚠️ Modo Visualización: Ejecuta el script de Colab para poblar estos datos.")
 
+    # VISUALIZACIÓN
     st.markdown(f"### 📢 ORDEN DEL DÍA")
     if "ALERTA" in str(orden):
         st.markdown(f'<div class="critical-box">🚨 {orden}</div>', unsafe_allow_html=True)
@@ -558,12 +581,13 @@ elif menu == "3. FINANZAS & RUNWAY":
     c_pe1, c_pe2, c_pe3 = st.columns(3)
     
     with c_pe1:
-        st.metric("COSTO FIJO DIARIO", f"S/ {burn_rate:,.2f}", "Burn Rate Operativo")
+        st.metric("CASH BURN DIARIO", f"S/ {burn_operativo:,.2f}", "Necesidad de Caja (Operativo)")
     with c_pe2:
-        val_margen = margen_contrib * 100 if margen_contrib > 0 else 0
+        val_margen = margen_contrib * 100
         st.metric("PE DIARIO (META)", f"S/ {pe_diario:,.2f}", f"Margen Real: {val_margen:.1f}%")
     with c_pe3:
-        st.metric("PE MENSUAL (META)", f"S/ {pe_mensual:,.0f}", "Para no perder dinero")
+        # ### NUEVO: Mostramos que el dato viene del cálculo real ###
+        st.metric("PE MENSUAL (META)", f"S/ {pe_mensual:,.0f}", f"Base Fija Real: S/ {costo_fijo_mensual_real:,.0f}")
         
     st.markdown("---")
 
