@@ -173,6 +173,7 @@ def load_all_data():
     def clean_currency(x):
         """Convierte texto 'S/ 1,200.00', '30%' o '1' a float"""
         if not isinstance(x, str): return x
+        # Quitamos símbolos de moneda, comas de miles y porcentajes
         clean_str = x.replace('S/', '').replace(',', '').replace('%', '').strip()
         try:
             return float(clean_str)
@@ -309,6 +310,13 @@ except Exception as e:
 # 4. LÓGICA DE INTERFAZ Y NAVEGACIÓN
 # ==============================================================================
 hoy = datetime.now() - timedelta(hours=5)
+
+# --- DETECCIÓN DE DATOS FUTUROS (CORRECCIÓN CTO) ---
+# Si tus datos están en 2026 pero el server está en 2025, esto lo arregla.
+if not DATA['ventas'].empty:
+    max_date_data = DATA['ventas']['Fecha_dt'].max()
+    if max_date_data > hoy:
+        hoy = max_date_data
 
 with st.sidebar:
     st.title("🔥 BRASAS CAPITALES")
@@ -774,6 +782,7 @@ elif menu == "5. CX & TIEMPOS":
                 use_container_width=True,
                 hide_index=True
             )
+
         except Exception as e:
             st.error("❌ Error de lógica en CX.")
             st.write(f"Detalle: {e}")
