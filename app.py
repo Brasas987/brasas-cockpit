@@ -171,23 +171,27 @@ def load_all_data():
 
     # 4. LIMPIEZA NUMÉRICA INTEGRAL
     def clean_currency(x):
-        """Convierte texto 'S/ 1,200.00' o '30%' a número puro"""
+        """Convierte texto 'S/ 1,200.00', '30%' o '1' a float"""
         if not isinstance(x, str): return x
-        # Quitamos símbolos de moneda, comas de miles y porcentajes
         clean_str = x.replace('S/', '').replace(',', '').replace('%', '').strip()
         try:
             return float(clean_str)
         except:
             return 0.0
 
-    # A. Limpieza Ventas
+    # A. Limpieza Ventas (AÑADIMOS 'CANTIDAD')
     if not DB['ventas'].empty:
+        # Limpieza de Monto
         cols_venta = ['Total_Venta', 'Total Venta', 'total_venta', 'Monto']
         col_found = next((c for c in cols_venta if c in DB['ventas'].columns), None)
         if col_found:
             DB['ventas']['Monto'] = DB['ventas'][col_found].apply(clean_currency)
         else:
-            DB['ventas']['Monto'] = 0.0 # Fallback
+            DB['ventas']['Monto'] = 0.0
+            
+        # Limpieza de Cantidad (ESTO FALTABA Y ROMPÍA LA ECONOMETRÍA)
+        if 'Cantidad' in DB['ventas'].columns:
+             DB['ventas']['Cantidad'] = pd.to_numeric(DB['ventas']['Cantidad'], errors='coerce').fillna(0)
 
     # B. Limpieza Costos
     if not DB['costos'].empty:
@@ -202,7 +206,7 @@ def load_all_data():
     if not DB['merma'].empty and 'Merma_Soles' in DB['merma'].columns:
         DB['merma']['Monto_Merma'] = DB['merma']['Merma_Soles'].apply(clean_currency)
 
-    # D. Limpieza Menu Engineering
+    # D. Limpieza Menu Engineering (AÑADIMOS PRECIO_NUM QUE ROMPÍA BCG)
     if not DB['menu_eng'].empty:
         targets = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num']
         for t in targets:
@@ -761,14 +765,15 @@ elif menu == "5. CX & TIEMPOS":
                     st.success("🎉 ¡Increíble! No hay incidencias negativas registradas en la muestra.")
 
             st.subheader("🕵️ Auditoría de Tickets (Últimos 10)")
+            
+            # CORRECCIÓN DE LÓGICA: Ordenamos PRIMERO, seleccionamos columnas DESPUÉS
+            df_display = df_validos.sort_values(by='Fecha_dt', ascending=False).head(10)
+            
             st.dataframe(
-                df_validos[['ID_Ticket', 'Fecha', 'Hora_Pedido', 'Hora_Entrega', 'Minutos_Espera', 'Status', 'Incidencia']]
-                .sort_values(by='Fecha_dt', ascending=False)
-                .head(10),
+                df_display[['ID_Ticket', 'Fecha', 'Hora_Pedido', 'Hora_Entrega', 'Minutos_Espera', 'Status', 'Incidencia']],
                 use_container_width=True,
                 hide_index=True
             )
-
         except Exception as e:
             st.error("❌ Error de lógica en CX.")
             st.write(f"Detalle: {e}")
