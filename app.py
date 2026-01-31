@@ -95,17 +95,16 @@ except Exception as e:
 # ==============================================================================
 # 3. MOTOR DE EXTRACCIÓN Y LIMPIEZA DE DATOS (ETL SEGURO)
 # ==============================================================================
-import time # IMPORTANTE: Esto permite pausar al robot
+import time # Necesario para la pausa de seguridad
 
 @st.cache_data(ttl=600)
 def load_all_data():
     client = connect_google_sheets()
     DB = {}
     
+    # 1. Función de Lectura Segura (Anti-Bloqueos de Google)
     def safe_read(file_key, sheet_name):
-        # 1. PAUSA TÁCTICA: Frenamos al robot 2 segundos para no enfadar a Google (Evita Error 429)
-        time.sleep(2) 
-        
+        time.sleep(1.5) # Pausa técnica para evitar error 429
         try:
             sheet_id = IDS.get(file_key)
             if not sheet_id: return pd.DataFrame()
@@ -113,29 +112,23 @@ def load_all_data():
             sh = client.open_by_key(sheet_id)
             ws = sh.worksheet(sheet_name)
             
-            # 2. MÉTODO ROBUSTO: Traemos todo como texto crudo para evitar errores de cabeceras
+            # Leemos TODO como texto para evitar errores de cabecera
             raw_data = ws.get_all_values()
             
-            # Si está vacío, devolvemos DataFrame vacío
             if not raw_data: return pd.DataFrame()
 
-            # Convertimos la primera fila en cabeceras y el resto en datos
+            # Convertimos a DataFrame usando la primera fila como cabecera
             headers = raw_data[0]
             rows = raw_data[1:]
-            
-            # Creamos el DataFrame
             df = pd.DataFrame(rows, columns=headers)
             return df
             
         except Exception as e:
-            # Si falla, avisamos pero no rompemos la app (aunque saldrá vacío)
             print(f"⚠️ Error recuperable en '{sheet_name}': {e}")
-            st.warning(f"⚠️ No se pudo cargar: {sheet_name}. Revisa si hay columnas repetidas en el Excel.")
             return pd.DataFrame()
 
-    # --- CARGA DE DATOS (Con pausas automáticas) ---
-    # El orden no importa, el sleep(2) protege cada llamada
-    with st.spinner('Conectando con la Matriz de Datos... (Esto toma unos segundos)'):
+    # 2. Carga Masiva (El Robot Trabajando)
+    with st.spinner('Procesando datos del negocio...'):
         DB['ventas'] = safe_read("REGISTROS", "BD_Ventas")
         DB['feriados'] = safe_read("REGISTROS", "MASTER_FERIADOS")
         DB['partidos'] = safe_read("REGISTROS", "MASTER_PARTIDOS")
@@ -153,52 +146,81 @@ def load_all_data():
         DB['mkt_semanal'] = safe_read("MKT_REGISTROS", "BD_Marketing_Semanal")
         DB['diaria'] = safe_read("REGISTROS", "Data_Diaria")
 
-    # --- LIMPIEZA DE FECHAS ---
+    # 3. LIMPIEZA DE FECHAS (Universal)
     for key in DB:
         if not DB[key].empty:
+            # Lista de posibles nombres de columnas de fecha
             date_cols = ['Fecha', 'Fecha_dt', 'ds', 'Marca temporal', 'Fecha_Vencimiento', 
                          'Fecha_Operacion', 'Fecha_Cierre', 'fecha', 'Date']
             
             for col_name in date_cols:
                 if col_name in DB[key].columns:
                     col_data = DB[key][col_name].astype(str)
+                    # Intento 1: Formato Día Primero (Latino)
                     DB[key]['Fecha_dt'] = pd.to_datetime(col_data, dayfirst=True, errors='coerce')
+                    
+                    # Intento 2: Si falló la mayoría, probamos formato mixto (ISO/USA)
                     if DB[key]['Fecha_dt'].isna().mean() > 0.8:
                         DB[key]['Fecha_dt'] = pd.to_datetime(col_data, format='mixed', errors='coerce')
+                    
+                    # Limpiamos filas con fechas inválidas
                     DB[key] = DB[key].dropna(subset=['Fecha_dt'])
                     break
 
-    # --- LIMPIEZA DE NÚMEROS ---
+    # 4. LIMPIEZA NUMÉRICA (Aquí estaba el error)
     def clean_currency(x):
-        if isinstance(x, str):
-            return x.replace('S/', '').replace(',', '').replace('%', '').strip()
-        return x
+        """Convierte texto 'S/ 1,200.00' o '30%' a número puro"""
+        if not isinstance(x, str): return x
+        # Quitamos símbolos de moneda, comas de miles y porcentajes
+        clean_str = x.replace('S/', '').replace(',', '').replace('%', '').strip()
+        try:
+            return float(clean_str)
+        except:
+            return 0.0
 
-    # Aplicamos limpieza numérica
-    if not DB['ventas'].empty and 'Total_Venta' in DB['ventas'].columns:
-        DB['ventas']['Monto'] = pd.to_numeric(DB['ventas']['Total_Venta'].apply(clean_currency), errors='coerce').fillna(0)
-    
-    if not DB['merma'].empty and 'Merma_Soles' in DB['merma'].columns:
-        DB['merma']['Monto_Merma'] = pd.to_numeric(DB['merma']['Merma_Soles'].apply(clean_currency), errors='coerce').fillna(0)
+    # A. Limpieza Ventas
+    if not DB['ventas'].empty:
+        # Buscamos la columna de venta aunque cambie un poco el nombre
+        cols_venta = ['Total_Venta', 'Total Venta', 'total_venta', 'Monto']
+        col_found = next((c for c in cols_venta if c in DB['ventas'].columns), None)
         
-    if not DB['costos'].empty and 'Margen_%' in DB['costos'].columns:
-        DB['costos']['Margen_Pct'] = pd.to_numeric(DB['costos']['Margen_%'].apply(clean_currency), errors='coerce').fillna(0)
+        if col_found:
+            DB['ventas']['Monto'] = DB['ventas'][col_found].apply(clean_currency)
+        else:
+            DB['ventas']['Monto'] = 0.0 # Fallback para que no rompa
 
+    # B. Limpieza Costos (Corrección del error Margen_Pct)
+    if not DB['costos'].empty:
+        # Buscamos variantes del nombre de la columna Margen
+        cols_margen = ['Margen_%', 'Margen %', 'Margen_Pct', 'Margen', 'margen']
+        col_found = next((c for c in cols_margen if c in DB['costos'].columns), None)
+        
+        if col_found:
+            DB['costos']['Margen_Pct'] = DB['costos'][col_found].apply(clean_currency)
+        else:
+            DB['costos']['Margen_Pct'] = 0.0
+
+    # C. Limpieza Merma
+    if not DB['merma'].empty and 'Merma_Soles' in DB['merma'].columns:
+        DB['merma']['Monto_Merma'] = DB['merma']['Merma_Soles'].apply(clean_currency)
+
+    # D. Limpieza Menu Engineering
     if not DB['menu_eng'].empty:
-        cols_eng = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num']
-        for c in cols_eng:
-            if c in DB['menu_eng'].columns:
-                DB['menu_eng'][c] = pd.to_numeric(DB['menu_eng'][c].apply(clean_currency), errors='coerce').fillna(0)
+        targets = ['Margen', 'Mix_Percent', 'Total_Venta', 'Precio_num']
+        for t in targets:
+            if t in DB['menu_eng'].columns:
+                DB['menu_eng'][t] = DB['menu_eng'][t].apply(clean_currency)
 
+    # E. Limpieza Yape
     if not DB['yape'].empty:
-        # Renombramos primero para evitar errores de clave
         mapa_cols = {'monto': 'Monto', 'origen': 'Origen', 'fecha': 'Fecha_Operacion'}
         DB['yape'].rename(columns=mapa_cols, inplace=True)
         if 'Monto' in DB['yape'].columns:
-            DB['yape']['Monto'] = pd.to_numeric(DB['yape']['Monto'].apply(clean_currency), errors='coerce').fillna(0)
+            DB['yape']['Monto'] = DB['yape']['Monto'].apply(clean_currency)
 
+    # F. Limpieza Marketing
     if not DB['mkt_semanal'].empty and 'Gasto_Ads' in DB['mkt_semanal'].columns:
-        DB['mkt_semanal']['Gasto_Ads'] = pd.to_numeric(DB['mkt_semanal']['Gasto_Ads'].apply(clean_currency), errors='coerce').fillna(0)
+        DB['mkt_semanal']['Gasto_Ads'] = DB['mkt_semanal']['Gasto_Ads'].apply(clean_currency)
 
     return DB
 # ==============================================================================
