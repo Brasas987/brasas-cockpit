@@ -7,7 +7,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta
 import numpy as np
-import traceback
+import time
 
 # ==============================================================================
 # 1. CONFIGURACIÓN DEL SISTEMA Y ESTILO (PALANTIR DARK MODE)
@@ -95,8 +95,6 @@ except Exception as e:
 # ==============================================================================
 # 3. MOTOR DE EXTRACCIÓN Y LIMPIEZA DE DATOS (ETL SEGURO)
 # ==============================================================================
-import time # Necesario para la pausa de seguridad
-
 @st.cache_data(ttl=600)
 def load_all_data():
     client = connect_google_sheets()
@@ -120,6 +118,10 @@ def load_all_data():
             # Convertimos a DataFrame usando la primera fila como cabecera
             headers = raw_data[0]
             rows = raw_data[1:]
+            
+            # Si hay filas vacías al final, las limpiamos
+            if not rows: return pd.DataFrame(columns=headers)
+            
             df = pd.DataFrame(rows, columns=headers)
             return df
             
@@ -167,7 +169,7 @@ def load_all_data():
                     DB[key] = DB[key].dropna(subset=['Fecha_dt'])
                     break
 
-    # 4. LIMPIEZA NUMÉRICA (Aquí estaba el error)
+    # 4. LIMPIEZA NUMÉRICA INTEGRAL
     def clean_currency(x):
         """Convierte texto 'S/ 1,200.00' o '30%' a número puro"""
         if not isinstance(x, str): return x
@@ -180,21 +182,17 @@ def load_all_data():
 
     # A. Limpieza Ventas
     if not DB['ventas'].empty:
-        # Buscamos la columna de venta aunque cambie un poco el nombre
         cols_venta = ['Total_Venta', 'Total Venta', 'total_venta', 'Monto']
         col_found = next((c for c in cols_venta if c in DB['ventas'].columns), None)
-        
         if col_found:
             DB['ventas']['Monto'] = DB['ventas'][col_found].apply(clean_currency)
         else:
-            DB['ventas']['Monto'] = 0.0 # Fallback para que no rompa
+            DB['ventas']['Monto'] = 0.0 # Fallback
 
-    # B. Limpieza Costos (Corrección del error Margen_Pct)
+    # B. Limpieza Costos
     if not DB['costos'].empty:
-        # Buscamos variantes del nombre de la columna Margen
         cols_margen = ['Margen_%', 'Margen %', 'Margen_Pct', 'Margen', 'margen']
         col_found = next((c for c in cols_margen if c in DB['costos'].columns), None)
-        
         if col_found:
             DB['costos']['Margen_Pct'] = DB['costos'][col_found].apply(clean_currency)
         else:
@@ -223,6 +221,19 @@ def load_all_data():
         DB['mkt_semanal']['Gasto_Ads'] = DB['mkt_semanal']['Gasto_Ads'].apply(clean_currency)
 
     return DB
+
+# --- HELPER: Limpieza de Float Segura para uso en la lógica principal ---
+def safe_float(val):
+    if pd.isna(val) or val == "":
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    val_str = str(val).replace('S/', '').replace(',', '').replace('%', '').strip()
+    try:
+        return float(val_str)
+    except:
+        return 0.0
+
 # ==============================================================================
 # MOTOR ECONOMÉTRICO (ETL AVANZADO)
 # ==============================================================================
@@ -230,7 +241,6 @@ def load_all_data():
 def build_econometric_master(db_data):
     """
     Construye la Tabla Maestra unificando Ventas, Contexto y Marketing.
-    No filtra fechas para no perder memoria histórica.
     """
     df_v = db_data.get('ventas', pd.DataFrame()).copy()
     df_ctx = db_data.get('diaria', pd.DataFrame()).copy() 
@@ -362,15 +372,16 @@ if menu == "1. CORPORATE OVERVIEW":
     df_sob = DATA['soberania']
     if not df_sob.empty:
         ultimo = df_sob.iloc[-1]
-        kpi_runway = ultimo.get('Runway_Dias', 0)
+        kpi_runway = safe_float(ultimo.get('Runway_Dias', 0))
+        burn = safe_float(ultimo.get('Burn_Rate_Diario', 0))
         
-        burn = ultimo.get('Burn_Rate_Diario', 0)
-        try:
-            ratio = float(str(ultimo.get('Ratio_Costo_Real', '0.6')).replace('%',''))
-            if ratio > 1: ratio /= 100
-        except: ratio = 0.60
+        # Limpieza robusta del Ratio
+        raw_ratio = ultimo.get('Ratio_Costo_Real', '0.6')
+        ratio_val = safe_float(raw_ratio)
+        if ratio_val > 1: ratio_val /= 100 # Si viene como 60 en vez de 0.6
+        if ratio_val == 0: ratio_val = 0.60 # Default de seguridad
         
-        margen_contrib = 1 - ratio
+        margen_contrib = 1 - ratio_val
         pe_diario = burn / margen_contrib if margen_contrib > 0 else 9999
 
     # --- VISUALIZACIÓN ---
@@ -463,7 +474,7 @@ elif menu == "2. EFICIENCIA & COSTOS":
         if not df_qc.empty:
             st.dataframe(df_qc, use_container_width=True)
             if 'Total_Pagado' in df_qc.columns:
-                 total_bad = pd.to_numeric(df_qc['Total_Pagado'].astype(str).str.replace(r'[S/,]', '', regex=True), errors='coerce').sum()
+                 total_bad = safe_float(df_qc['Total_Pagado'].sum())
                  st.metric("TOTAL PERDIDO EN COMPRAS MALAS", f"S/ {total_bad:,.2f}", delta="-QC FAIL", delta_color="inverse")
         else:
             st.success("✅ Excelente. No hay reportes de compras rechazadas.")
@@ -473,6 +484,10 @@ elif menu == "2. EFICIENCIA & COSTOS":
     st.subheader("⚖️ Discrepancia de Inventario (Gap Analysis)")
     if not df_m.empty and 'Stock_teorico_gr' in df_m.columns:
         df_gap = df_m.copy()
+        # Aseguramos que sean números
+        df_gap['Stock_teorico_gr'] = df_gap['Stock_teorico_gr'].apply(safe_float)
+        df_gap['Stock_real_gr'] = df_gap['Stock_real_gr'].apply(safe_float)
+        
         df_gap['Gap'] = df_gap['Stock_teorico_gr'] - df_gap['Stock_real_gr']
         df_gap = df_gap.sort_values('Gap', ascending=False).head(10)
         
@@ -502,16 +517,16 @@ elif menu == "3. FINANZAS & RUNWAY":
         ultimo = df_sob.iloc[-1]
         
         orden = ultimo.get('ORDEN_TESORERIA', 'SIN DATOS')
-        runway_val = ultimo.get('Runway_Dias', 0)
-        burn_rate = ultimo.get('Burn_Rate_Diario', 0)
-        deuda_tc = ultimo.get('Deuda_TC_Auditada', 0)
+        runway_val = safe_float(ultimo.get('Runway_Dias', 0))
+        burn_rate = safe_float(ultimo.get('Burn_Rate_Diario', 0))
+        deuda_tc = safe_float(ultimo.get('Deuda_TC_Auditada', 0))
         
-        try:
-            ratio = float(str(ultimo.get('Ratio_Costo_Real', '0.6')).replace('%',''))
-            if ratio > 1: ratio /= 100
-        except: ratio = 0.60
-        margen_contrib = 1 - ratio
+        raw_ratio = ultimo.get('Ratio_Costo_Real', '0.6')
+        ratio_val = safe_float(raw_ratio)
+        if ratio_val > 1: ratio_val /= 100
+        if ratio_val == 0: ratio_val = 0.60
         
+        margen_contrib = 1 - ratio_val
         pe_diario = burn_rate / margen_contrib if margen_contrib > 0 else 0
         pe_mensual = pe_diario * 30
     else:
@@ -545,6 +560,7 @@ elif menu == "3. FINANZAS & RUNWAY":
     st.subheader("✈️ Evolución de Supervivencia")
     
     if not df_sob.empty:
+        df_sob['Runway_Dias'] = df_sob['Runway_Dias'].apply(safe_float)
         fig_run = px.line(df_sob, x='Fecha_dt', y='Runway_Dias', markers=True)
     else:
         dummy_data = pd.DataFrame({'Fecha_dt': [hoy], 'Runway_Dias': [0]})
@@ -571,6 +587,9 @@ elif menu == "3. FINANZAS & RUNWAY":
         st.subheader("🏗️ CAPEX")
         df_cap = DATA['capex']
         if not df_cap.empty:
+            df_cap['Monto_Acumulado_Actual'] = df_cap['Monto_Acumulado_Actual'].apply(safe_float)
+            df_cap['Monto_Total'] = df_cap['Monto_Total'].apply(safe_float)
+            
             df_cap['Avance'] = (df_cap['Monto_Acumulado_Actual'] / df_cap['Monto_Total'])
             st.dataframe(df_cap, column_config={"Avance": st.column_config.ProgressColumn("Progreso", format="%.0f%%")}, use_container_width=True)
         else: st.info("🔨 Sin proyectos activos.")
@@ -944,10 +963,10 @@ elif menu == "7. GESTION DE MARCA":
                 mask_ventas = (df_v['Fecha_dt'] >= fecha_ini) & (df_v['Fecha_dt'] <= fecha_fin)
                 venta_semanal = df_v.loc[mask_ventas, 'Monto'].sum()
 
-                gasto = row.get('Gasto_Ads', 0)
+                gasto = safe_float(row.get('Gasto_Ads', 0))
                 mer = venta_semanal / gasto if gasto > 0 else 0
                 
-                reviews = row.get('Google_Review') if 'Google_Review' in row else row.get('Google_Reviews', 0)
+                reviews = safe_float(row.get('Google_Review') if 'Google_Review' in row else row.get('Google_Reviews', 0))
                 
                 fila_procesada = {
                     'Semana': fecha_fin.strftime("%d-%b"),
@@ -1065,24 +1084,24 @@ elif menu == "8. MODELO ECONOMÉTRICO":
             fig_env = px.line(df_plot, x='Fecha_dt', y='Cantidad', title="Impacto de Variables Externas")
             fig_env.update_traces(line_color='gray', opacity=0.5)
 
-            if 'Lluvia_Intensa' in df_plot.columns and df_plot['Lluvia_Intensa'].sum() > 0:
-                df_rain = df_plot[df_plot['Lluvia_Intensa'] == 1]
+            if 'Lluvia_Intensa' in df_plot.columns and df_plot['Lluvia_Intensa'].apply(safe_float).sum() > 0:
+                df_rain = df_plot[df_plot['Lluvia_Intensa'].astype(str) == '1']
                 fig_env.add_trace(go.Scatter(
                     x=df_rain['Fecha_dt'], y=df_rain['Cantidad'],
                     mode='markers', name='Lluvia Intensa 🌧️',
                     marker=dict(color='blue', size=12, symbol='triangle-down')
                 ))
 
-            if 'Competencia_Agresiva' in df_plot.columns and df_plot['Competencia_Agresiva'].sum() > 0:
-                df_comp = df_plot[df_plot['Competencia_Agresiva'] == 1]
+            if 'Competencia_Agresiva' in df_plot.columns and df_plot['Competencia_Agresiva'].apply(safe_float).sum() > 0:
+                df_comp = df_plot[df_plot['Competencia_Agresiva'].astype(str) == '1']
                 fig_env.add_trace(go.Scatter(
                     x=df_comp['Fecha_dt'], y=df_comp['Cantidad'],
                     mode='markers', name='Ataque Competencia ⚔️',
                     marker=dict(color='red', size=12, symbol='x')
                 ))
 
-            if 'Stockout_Cierre' in df_plot.columns and df_plot['Stockout_Cierre'].sum() > 0:
-                df_stock = df_plot[df_plot['Stockout_Cierre'] == 1]
+            if 'Stockout_Cierre' in df_plot.columns and df_plot['Stockout_Cierre'].apply(safe_float).sum() > 0:
+                df_stock = df_plot[df_plot['Stockout_Cierre'].astype(str) == '1']
                 fig_env.add_trace(go.Scatter(
                     x=df_stock['Fecha_dt'], y=df_stock['Cantidad'],
                     mode='markers', name='Quiebre de Stock 🚫',
@@ -1094,42 +1113,3 @@ elif menu == "8. MODELO ECONOMÉTRICO":
             
             with st.expander("🔎 Ver Data Maestra (Auditable)"):
                 st.dataframe(df_plot, use_container_width=True)
-
-#====================================================================================
-# ==============================================================================
-# BLOQUE DE DIAGNÓSTICO (PEGAR AL FINAL DEL SCRIPT)
-# ==============================================================================
-with st.sidebar:
-    st.markdown("---")
-    st.header("🕵️ MOD DE DIAGNÓSTICO")
-    
-    # 1. Chequeo de Fecha del Sistema
-    st.write(f"**Fecha del Sistema (Python):** {hoy.strftime('%Y-%m-%d')}")
-    
-    # 2. Chequeo de Datos Crudos
-    if not DATA['ventas'].empty:
-        df_debug = DATA['ventas']
-        st.write(f"**Filas Cargadas:** {len(df_debug)}")
-        
-        # Chequeo de columnas
-        st.write("**Columnas Detectadas:**")
-        st.code(list(df_debug.columns))
-        
-        # Chequeo de Fechas en el Excel
-        if 'Fecha_dt' in df_debug.columns:
-            min_date = df_debug['Fecha_dt'].min()
-            max_date = df_debug['Fecha_dt'].max()
-            st.info(f"📅 Tu Excel va desde:\n{min_date} \nhasta: \n{max_date}")
-            
-            # Verificación de Filtro
-            mask_debug = (df_debug['Fecha_dt'].dt.date >= start_date.date()) & (df_debug['Fecha_dt'].dt.date <= hoy.date())
-            rows_filtered = df_debug[mask_debug].shape[0]
-            
-            if rows_filtered == 0:
-                st.error(f"🚨 EL FILTRO BORRA TODO.\nEstás buscando desde {start_date.date()} hasta {hoy.date()}.\nPero tus datos terminan en {max_date.date()}.")
-            else:
-                st.success(f"✅ El filtro encuentra {rows_filtered} filas.")
-        else:
-            st.error("❌ La columna 'Fecha_dt' NO se creó. Falló la limpieza de fechas.")
-    else:
-        st.error("❌ La tabla 'ventas' está completamente vacía. Revisa la conexión a Google Sheets.")
